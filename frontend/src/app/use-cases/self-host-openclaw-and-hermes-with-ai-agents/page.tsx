@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { getUseCase, formatDate } from "../cases";
 
-const slug = "self-host-opencloud-and-hermes-with-ai-agents";
+const slug = "self-host-openclaw-and-hermes-with-ai-agents";
 const useCase = getUseCase(slug)!;
 const url = `/use-cases/${slug}`;
 
@@ -66,26 +66,8 @@ function Prompt({ children }: { children: React.ReactNode }) {
   );
 }
 
-const openCloudInit = `docker run --rm -it \\
-  --name opencloud \\
-  -p 9200:9200 \\
-  -e OC_URL=https://localhost:9200 \\
-  -e OC_INSECURE=true \\
-  -e IDM_ADMIN_PASSWORD=change-me \\
-  -v opencloud-config:/etc/opencloud \\
-  -v opencloud-data:/var/lib/opencloud \\
-  opencloudeu/opencloud-rolling:latest \\
-  init`;
-
-const openCloudServer = `docker run -d \\
-  --name opencloud \\
-  -p 9200:9200 \\
-  -e OC_URL=https://localhost:9200 \\
-  -e OC_INSECURE=true \\
-  -v opencloud-config:/etc/opencloud \\
-  -v opencloud-data:/var/lib/opencloud \\
-  opencloudeu/opencloud-rolling:latest \\
-  server`;
+const openClawInstall = `npm install -g openclaw@latest   # requires Node 24, or Node 22.19+
+openclaw onboard --install-daemon  # guided setup + keep it running as a service`;
 
 const hermesInstall = `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 source ~/.bashrc`;
@@ -96,7 +78,7 @@ hermes tools        # enable terminal, web, and memory tools
 hermes gateway setup # connect Telegram, Discord, Slack, Signal, email, etc.
 hermes gateway start`;
 
-// HowTo + Article structured data for rich results.
+// Article + HowTo structured data for rich results.
 const jsonLd = {
   "@context": "https://schema.org",
   "@graph": [
@@ -113,29 +95,29 @@ const jsonLd = {
     },
     {
       "@type": "HowTo",
-      name: "Set up OpenCloud and Hermes with an AI agent",
+      name: "Set up OpenClaw and Hermes with an AI agent",
       description:
-        "Self-host OpenCloud and the Hermes AI agent by delegating the terminal work to Claude or GPT.",
+        "Self-host the OpenClaw and Hermes AI assistants by delegating the terminal work to Claude or GPT.",
       step: [
         {
           "@type": "HowToStep",
           name: "Provision a host and a coding agent",
-          text: "Spin up a small Linux VPS with Docker, and point an AI coding agent like Claude Code or Codex at an SSH session.",
+          text: "Spin up a small Linux VPS, and point an AI coding agent like Claude Code or Codex at an SSH session.",
         },
         {
           "@type": "HowToStep",
-          name: "Have the agent deploy OpenCloud",
-          text: "Ask the agent to run the OpenCloud rolling container, initialize it, and start the server on port 9200.",
+          name: "Have the agent install OpenClaw",
+          text: "Ask the agent to install OpenClaw, run the onboarding wizard with your LLM API key, and connect a messaging channel.",
         },
         {
           "@type": "HowToStep",
           name: "Have the agent install Hermes",
-          text: "Ask the agent to run the Hermes install script, run the setup wizard with your LLM API key, and start a messaging gateway.",
+          text: "Ask the agent to run the Hermes install script, run the setup wizard, pick a model, and start a messaging gateway.",
         },
         {
           "@type": "HowToStep",
-          name: "Verify both services",
-          text: "Log in to OpenCloud in the browser and send Hermes a message through your chosen gateway.",
+          name: "Message both assistants",
+          text: "Send each assistant a message from your chosen app and confirm it responds.",
         },
       ],
     },
@@ -172,14 +154,13 @@ export default function ArticlePage() {
             <span>{useCase.readingTime}</span>
           </div>
           <h1 style={{ fontSize: "clamp(32px, 6vw, 52px)", lineHeight: 1.15, margin: "0 0 18px" }}>
-            How to Set Up OpenCloud and Hermes with Claude or GPT
+            How to Set Up OpenClaw and Hermes with Claude or GPT
           </h1>
           <p style={{ fontSize: 20, lineHeight: 1.6, color: "#3c4043" }}>
-            Self-hosting used to mean an afternoon of copy-pasting commands and decoding error logs.
-            It doesn&apos;t anymore. Here&apos;s how to stand up{" "}
-            <strong>OpenCloud</strong> (your own file-sync and collaboration cloud) and{" "}
-            <strong>Hermes</strong> (a self-hosted AI agent) by letting an AI agent do the typing —
-            while you stay in the driver&apos;s seat.
+            <strong>OpenClaw</strong> and <strong>Hermes</strong> are two of the most popular
+            open-source, self-hosted AI assistants — the kind you message from Telegram or Slack and
+            they actually <em>do things</em> on your own machine. Here&apos;s how to stand up both by
+            letting an AI coding agent do the typing, while you stay in the driver&apos;s seat.
           </p>
         </header>
 
@@ -187,34 +168,39 @@ export default function ArticlePage() {
           <p>
             This is honestly one of the most useful things you can do with an AI coding agent.
             Instead of following a wiki line by line, you describe what you want, the agent runs the
-            commands over SSH, reads the output, and fixes its own mistakes. The two pieces we&apos;ll
-            set up are a good test of that workflow:
+            commands over SSH, reads the output, and fixes its own mistakes. Running both of these
+            side by side is also a great way to feel out which one you prefer:
           </p>
           <ul style={{ paddingLeft: 22 }}>
             <li>
-              <strong>OpenCloud</strong> — an open-source, cloud-native platform for file storage,
-              sync, and team collaboration. It&apos;s a modern successor in the ownCloud lineage,
-              built from microservices and designed to run in Docker.
+              <strong>OpenClaw</strong> — an open-source personal AI assistant (think &quot;Claude with
+              hands&quot;) created by Peter Steinberger. It runs on your own hardware, plugs into the
+              LLM of your choice, and connects to messaging apps like WhatsApp, Telegram, Slack,
+              Discord, Signal, and iMessage so you can talk to it from anywhere.
             </li>
             <li>
-              <strong>Hermes</strong> — an open-source, self-hosted AI agent from Nous Research. It
-              connects to the LLM of your choice, runs terminal commands, browses the web, remembers
-              what it learns, and talks to you over messaging apps like Telegram, Discord, Slack, or
-              Signal.
+              <strong>Hermes</strong> — an open-source, self-hosted AI agent from Nous Research. Same
+              core idea: connect a model, run terminal commands, browse the web, remember what it
+              learns, and reach you over your messaging app of choice.
             </li>
           </ul>
+          <p>
+            Both are model-agnostic — Claude, GPT, Gemini, or a local model via Ollama all work — so
+            you&apos;re not locked in either way.
+          </p>
 
           <h2 style={{ fontSize: 30, marginTop: 44 }}>What you&apos;ll need</h2>
           <ul style={{ paddingLeft: 22 }}>
             <li>A small Linux server — a 2 GB RAM VPS is plenty to start.</li>
-            <li>Docker installed (your agent can do this too).</li>
             <li>
               An AI coding agent with terminal access — <strong>Claude Code</strong>,{" "}
               <strong>Codex</strong>, or any agent that can run shell commands over SSH.
             </li>
             <li>
-              An LLM API key for Hermes — Anthropic (Claude), OpenAI (GPT), or OpenRouter all work.
+              An LLM API key for the assistants — Anthropic (Claude), OpenAI (GPT), or another
+              supported provider.
             </li>
+            <li>Node.js (OpenClaw wants Node 24, or 22.19+) — your agent can install it.</li>
           </ul>
 
           <h2 style={{ fontSize: 30, marginTop: 44 }}>The workflow: you supervise, the agent types</h2>
@@ -224,10 +210,10 @@ export default function ArticlePage() {
             log-reading. A good opening prompt:
           </p>
           <Prompt>
-            You have SSH access to a fresh Ubuntu server. I want to self-host two things: OpenCloud
-            (file sync &amp; collaboration) and the Hermes AI agent from Nous Research. Work one
-            service at a time, show me each command before running anything destructive, and verify
-            each service is healthy before moving on.
+            You have SSH access to a fresh Ubuntu server. I want to self-host two AI assistants:
+            OpenClaw and the Hermes agent from Nous Research. Install Node 24 if it&apos;s missing,
+            work one assistant at a time, show me each command before running anything destructive,
+            and verify each one responds before moving on.
           </Prompt>
           <p>
             From here, the agent drives. The sections below show what it should land on — useful both
@@ -235,52 +221,35 @@ export default function ArticlePage() {
             things by hand.
           </p>
 
-          <h2 style={{ fontSize: 30, marginTop: 44 }}>Part 1 — Deploy OpenCloud</h2>
+          <h2 style={{ fontSize: 30, marginTop: 44 }}>Part 1 — Set up OpenClaw</h2>
           <p>
-            OpenCloud ships as a single &quot;rolling&quot; container that you first{" "}
-            <code>init</code> (to generate its config) and then run as a <code>server</code>. Ask
-            your agent for exactly that:
+            OpenClaw installs from npm and ships an onboarding wizard that walks you through the LLM
+            provider, channels, and running it as a background service. Hand the agent the goal:
           </p>
           <Prompt>
-            Deploy OpenCloud using the official <code>opencloudeu/opencloud-rolling</code> image.
-            Initialize it with an admin password I&apos;ll give you, then run the server on port 9200
-            with persistent volumes for config and data.
+            Install OpenClaw globally with npm, then run its onboarding wizard and install it as a
+            daemon so it stays running. I&apos;ll paste my Anthropic API key when prompted so it runs
+            on Claude, and connect a Telegram channel.
           </Prompt>
-          <p>The initialization step it should run:</p>
-          <CodeBlock>{openCloudInit}</CodeBlock>
+          <p>The core of it:</p>
+          <CodeBlock>{openClawInstall}</CodeBlock>
           <p>
-            That prints the generated admin credentials and writes config to the{" "}
-            <code>opencloud-config</code> volume. Then it starts the server detached:
-          </p>
-          <CodeBlock>{openCloudServer}</CodeBlock>
-          <p>
-            Open <code>https://localhost:9200</code> (or your server&apos;s address) and log in as{" "}
-            <code>admin</code> with the password you set. You now have a working file cloud.
-          </p>
-          <p
-            style={{
-              background: "#fff8e1",
-              border: "1px solid #ffe082",
-              borderRadius: 12,
-              padding: "14px 18px",
-            }}
-          >
-            <strong>Before you expose it publicly:</strong> <code>OC_INSECURE=true</code> is for local
-            testing only. For a real deployment, tell your agent to put OpenCloud behind a reverse
-            proxy (Caddy or Traefik) with a real TLS certificate, set <code>OC_URL</code> to your
-            domain, and drop the insecure flag. This is exactly the kind of multi-step change agents
-            handle well — ask it to wire up Caddy and it will.
+            The <code>onboard</code> wizard handles the rest interactively — pick your provider, drop
+            in the API key, and link a messaging channel. There&apos;s also a one-line installer
+            (<code>curl -fsSL https://openclaw.ai/install.sh | bash</code>) and Docker images if you&apos;d
+            rather containerize; ask your agent for whichever fits your host. When it&apos;s done,
+            message OpenClaw from the channel you linked and it&apos;ll answer.
           </p>
 
-          <h2 style={{ fontSize: 30, marginTop: 44 }}>Part 2 — Install Hermes</h2>
+          <h2 style={{ fontSize: 30, marginTop: 44 }}>Part 2 — Set up Hermes</h2>
           <p>
-            Hermes installs with a single script and then walks you through configuration with its own
-            wizard. Hand the agent the goal:
+            Hermes installs with a single script and then configures itself through its own
+            subcommands. Same pattern — describe the outcome:
           </p>
           <Prompt>
             Install the Hermes agent from Nous Research. Run the install script, then the setup wizard
-            — I&apos;ll paste my Anthropic API key when prompted so it runs on Claude. After that,
-            enable the terminal, web, and memory tools and connect a Telegram gateway.
+            — I&apos;ll paste my API key when prompted. After that, enable the terminal, web, and
+            memory tools and connect a Telegram gateway.
           </Prompt>
           <p>The install:</p>
           <CodeBlock>{hermesInstall}</CodeBlock>
@@ -292,17 +261,17 @@ export default function ArticlePage() {
             that app and it&apos;ll respond, run commands, and remember context across sessions.
           </p>
 
-          <h2 style={{ fontSize: 30, marginTop: 44 }}>Part 3 — Let them look after each other</h2>
+          <h2 style={{ fontSize: 30, marginTop: 44 }}>Part 3 — Two assistants, now what?</h2>
           <p>
-            You now have two agents in play: the coding agent that built everything, and Hermes living
-            on the box. Point Hermes at the OpenCloud container and ask it to confirm the deployment is
-            healthy, schedule a nightly backup of the data volume, or ping you if the service goes
-            down. Self-hosted infrastructure that keeps an eye on itself.
+            With both running, you can give them different jobs — OpenClaw on personal/desktop tasks,
+            Hermes watching a server — or just keep both around to compare how they handle the same
+            request. Either way you now have AI assistants you can reach from your phone, doing real
+            work on hardware you own.
           </p>
           <p>
-            The interesting limit shows up when a job needs more than one agent thinking at once — your
-            coding agent and Hermes comparing notes, or a few agents splitting up a migration. Getting
-            agents to actually talk to each other is the gap we built{" "}
+            The interesting limit shows up when a task needs more than one agent thinking at once —
+            OpenClaw and Hermes comparing notes, or a few agents splitting up a job. Getting agents to
+            actually talk to each other is the gap we built{" "}
             <Link href="/" style={{ color: "#4285f4", fontWeight: 600 }}>
               AgentMeet
             </Link>{" "}
@@ -314,29 +283,29 @@ export default function ArticlePage() {
           <h2 style={{ fontSize: 30, marginTop: 44 }}>Tips for letting an agent run your server</h2>
           <ul style={{ paddingLeft: 22 }}>
             <li>
-              <strong>Make it verify, not assume.</strong> Tell it to <code>docker ps</code> and curl
-              the health endpoint after each deploy, not just declare success.
+              <strong>Make it verify, not assume.</strong> Tell it to check the service status and
+              send a real test message after each install, not just declare success.
             </li>
             <li>
               <strong>Keep secrets out of the transcript.</strong> Have the agent reference{" "}
-              <code>$VAR</code> environment variables instead of pasting API keys and passwords inline.
+              <code>$VAR</code> environment variables instead of pasting API keys inline.
             </li>
             <li>
-              <strong>Pin versions for anything you care about.</strong> <code>:latest</code> is fine
-              for a test box; pin a tag before you depend on it.
+              <strong>Mind the permissions.</strong> These assistants can run commands on your box —
+              start them with a non-root user and only the access they need.
             </li>
             <li>
               <strong>Check the current docs.</strong> Both projects move fast — the commands above are
-              the shape of the setup, but ask your agent to confirm flags against the latest OpenCloud
+              the shape of the setup, but ask your agent to confirm them against the latest OpenClaw
               and Hermes documentation before running.
             </li>
           </ul>
 
           <h2 style={{ fontSize: 30, marginTop: 44 }}>Wrapping up</h2>
           <p>
-            Two self-hosted services, stood up by describing what you want instead of memorizing
-            commands. That&apos;s the real shift: agents are getting good enough that &quot;set up my
-            infrastructure&quot; is becoming a sentence rather than a weekend.
+            Two self-hosted AI assistants, stood up by describing what you want instead of memorizing
+            commands. That&apos;s the real shift: setup is becoming a sentence rather than a weekend —
+            and the agent doing the work is the same kind of agent you&apos;re installing.
           </p>
         </div>
 

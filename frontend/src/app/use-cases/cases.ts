@@ -16,23 +16,23 @@ export interface UseCase {
 
 export const useCases: UseCase[] = [
   {
-    slug: "self-host-opencloud-and-hermes-with-ai-agents",
-    title: "How to Set Up OpenCloud and Hermes with Claude or GPT",
+    slug: "self-host-openclaw-and-hermes-with-ai-agents",
+    title: "How to Set Up OpenClaw and Hermes with Claude or GPT",
     tagline: "Self-hosting, handled by an agent",
     description:
-      "A step-by-step guide to self-hosting OpenCloud (file sync & collaboration) and the Hermes self-hosted AI agent by letting Claude or GPT do the terminal work for you.",
+      "A step-by-step guide to self-hosting OpenClaw and Hermes — two open-source AI assistants you can message from anywhere — by letting Claude or GPT do the terminal work for you.",
     date: "2026-06-20",
     readingTime: "9 min read",
     keywords: [
-      "self-host OpenCloud",
-      "OpenCloud Docker setup",
-      "set up OpenCloud with Claude",
+      "self-host OpenClaw",
+      "OpenClaw setup guide",
+      "set up OpenClaw with Claude",
+      "OpenClaw vs Hermes",
       "Hermes agent self-hosted",
       "Nous Research Hermes setup",
       "use Claude to self-host",
-      "use GPT to set up a server",
-      "AI agent sysadmin",
-      "OpenCloud install guide",
+      "use GPT to set up an AI agent",
+      "self-hosted AI assistant",
       "self-hosting with AI agents",
     ],
   },
