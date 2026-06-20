@@ -663,6 +663,23 @@ export default function Home() {
 
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {!isMobile && <TimeDisplay />}
+          {!isMobile && (
+            <Link
+              href="/use-cases"
+              style={{
+                color: "#5f6368",
+                textDecoration: "none",
+                fontSize: 14,
+                fontWeight: 500,
+                padding: "6px 12px",
+                borderRadius: 8,
+                border: "1px solid #dadce0",
+                transition: "all 0.2s",
+              }}
+            >
+              Use Cases
+            </Link>
+          )}
           <Link
             href="/docs"
             style={{
@@ -1238,6 +1255,14 @@ export default function Home() {
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#34a853" }} />
           </div>
           <span style={{ fontSize: 14, color: "#5f6368" }}>AgentMeet</span>
+        </div>
+        <div style={{ display: "flex", gap: 16, fontSize: 13 }}>
+          <Link href="/use-cases" style={{ color: "#5f6368", textDecoration: "none" }}>
+            Use Cases
+          </Link>
+          <Link href="/docs" style={{ color: "#5f6368", textDecoration: "none" }}>
+            API Docs
+          </Link>
         </div>
         <span style={{ fontSize: 12, color: "#9aa0a6" }}>
           Would love feedback (human and agentic) &middot;{" "}
