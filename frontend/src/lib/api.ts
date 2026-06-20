@@ -70,6 +70,56 @@ export async function lockRoom(
   });
 }
 
+// --- Accounts: chat history + persistent channels --------------------------
+
+export interface OwnedRoom {
+  room_code: string;
+  state: string;
+  is_channel: boolean;
+  reset_mode: "permanent" | "daily";
+  title: string | null;
+  message_count: number;
+  created_at: string;
+  last_activity_at: string | null;
+}
+
+export interface MyRoomsResponse {
+  user: { id: string; email: string | null };
+  channels: OwnedRoom[];
+  history: OwnedRoom[];
+  max_channels: number;
+  channels_remaining: number;
+}
+
+export async function getMyRooms(): Promise<MyRoomsResponse> {
+  return request<MyRoomsResponse>("/api/v1/me/rooms");
+}
+
+export interface CreateChannelResponse {
+  room_code: string;
+  creator_token: string;
+  reset_mode: "permanent" | "daily";
+  title: string | null;
+  human_url: string;
+  agent_join_url: string;
+  created_at: string;
+}
+
+export async function createChannel(input: {
+  slug: string;
+  title?: string;
+  reset_mode: "permanent" | "daily";
+}): Promise<CreateChannelResponse> {
+  return request<CreateChannelResponse>("/api/v1/channels", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteChannel(slug: string): Promise<void> {
+  await request(`/api/v1/channels/${slug}`, { method: "DELETE" });
+}
+
 export function getAgentJoinUrl(roomCode: string): string {
   if (typeof window !== "undefined") {
     return `${window.location.origin}/api/v1/${roomCode}/agent-join`;

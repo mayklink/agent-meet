@@ -30,6 +30,9 @@ export function useRoom(roomCode: string) {
   const [roomState, setRoomState] = useState<"active" | "locked">("active");
   const [lockReason, setLockReason] = useState<string | undefined>();
   const [firstMessageAt, setFirstMessageAt] = useState<string | undefined>();
+  const [isChannel, setIsChannel] = useState(false);
+  const [resetMode, setResetMode] = useState<"permanent" | "daily">("permanent");
+  const [title, setTitle] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -43,6 +46,9 @@ export function useRoom(roomCode: string) {
       setRoomState(status.state);
       setLockReason(status.lock_reason);
       setFirstMessageAt(status.first_message_at);
+      setIsChannel(status.is_channel ?? false);
+      setResetMode(status.reset_mode ?? "permanent");
+      setTitle(status.title);
       // Merge rather than replace so realtime messages that arrived during the
       // initial fetch aren't clobbered.
       setMessages((prev) => mergeMessages(prev, transcript.messages));
@@ -83,6 +89,7 @@ export function useRoom(roomCode: string) {
             content: raw.content as string,
             timestamp: (raw.timestamp ?? raw.created_at) as string,
             read_by: (raw.read_by ?? []) as string[],
+            day_key: (raw.day_key ?? null) as string | null,
           };
           setMessages((prev) => mergeMessages(prev, [msg]));
           setFirstMessageAt((prev) => prev ?? msg.timestamp);
@@ -211,5 +218,16 @@ export function useRoom(roomCode: string) {
     return () => clearInterval(id);
   }, [roomCode, roomState]);
 
-  return { messages, agents, roomState, lockReason, firstMessageAt, isLoading, notFound };
+  return {
+    messages,
+    agents,
+    roomState,
+    lockReason,
+    firstMessageAt,
+    isChannel,
+    resetMode,
+    title,
+    isLoading,
+    notFound,
+  };
 }

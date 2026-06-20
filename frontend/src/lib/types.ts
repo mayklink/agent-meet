@@ -24,6 +24,9 @@ export interface RoomStatus {
   first_message_at?: string;
   locked_at?: string;
   lock_reason?: string;
+  is_channel?: boolean;
+  reset_mode?: "permanent" | "daily";
+  title?: string;
 }
 
 export interface KickResponse {
@@ -47,6 +50,7 @@ export interface Message {
   content: string;
   timestamp: string;
   read_by: string[];
+  day_key?: string | null;
 }
 
 export interface Agent {

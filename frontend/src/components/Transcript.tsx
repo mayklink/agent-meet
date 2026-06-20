@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useCallback, useState, memo } from "react";
+import { useRef, useEffect, useCallback, useState, memo, Fragment } from "react";
 import type { Message } from "@/lib/types";
 import ReactMarkdown from "react-markdown";
 
@@ -39,6 +39,42 @@ interface TranscriptProps {
   lockReason?: string;
   onCopyJoinUrl?: () => void;
   copiedJoinUrl?: boolean;
+  showDayDividers?: boolean;
+}
+
+function dayOf(msg: Message): string {
+  return msg.day_key ?? new Date(msg.timestamp).toISOString().slice(0, 10);
+}
+
+function formatDayLabel(day: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const d = new Date(`${day}T00:00:00`);
+  const label = d.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
+  return day === today ? `Today · ${label}` : label;
+}
+
+function DayDivider({ day }: { day: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "4px 0" }}>
+      <div style={{ flex: 1, height: 1, background: "var(--room-border)" }} />
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+          color: "var(--room-text-muted)",
+        }}
+      >
+        {formatDayLabel(day)}
+      </span>
+      <div style={{ flex: 1, height: 1, background: "var(--room-border)" }} />
+    </div>
+  );
 }
 
 function humanizeReason(reason?: string): string {
@@ -54,7 +90,7 @@ function humanizeReason(reason?: string): string {
   }
 }
 
-export function Transcript({ messages, isLocked, lockReason, onCopyJoinUrl, copiedJoinUrl }: TranscriptProps) {
+export function Transcript({ messages, isLocked, lockReason, onCopyJoinUrl, copiedJoinUrl, showDayDividers }: TranscriptProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [copiedRoomLink, setCopiedRoomLink] = useState(false);
@@ -305,119 +341,140 @@ export function Transcript({ messages, isLocked, lockReason, onCopyJoinUrl, copi
               msg.agent_name === "system" || msg.agent_name === "System";
             const prevMsg = idx > 0 ? messages[idx - 1] : null;
             const isNewSpeaker = !prevMsg || prevMsg.agent_id !== msg.agent_id;
+            const showDivider =
+              showDayDividers && (!prevMsg || dayOf(prevMsg) !== dayOf(msg));
+            const divider = showDivider ? (
+              <DayDivider key={`day-${dayOf(msg)}`} day={dayOf(msg)} />
+            ) : null;
 
             if (isSystemMessage) {
               return (
-                <div
-                  key={msg.message_id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "center",
-                    animation: "fadeIn 0.3s ease-out",
-                  }}
-                >
-                  <div
-                    style={{
-                      background: "rgba(52, 168, 83, 0.13)",
-                      color: "var(--room-green)",
-                      borderRadius: 20,
-                      padding: "6px 16px",
-                      fontSize: 12,
-                    }}
-                  >
-                    {msg.content}
-                  </div>
-                </div>
+                <Fragment key={msg.message_id}>
+                  {divider}
+                  {systemBubble(msg)}
+                </Fragment>
               );
             }
 
             return (
-              <div
-                key={msg.message_id}
-                style={{
-                  display: "flex",
-                  gap: 12,
-                  alignItems: "flex-start",
-                  marginTop: !isNewSpeaker ? -8 : 0,
-                  animation: "fadeIn 0.3s ease-out",
-                }}
-              >
-                {isNewSpeaker ? (
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: "50%",
-                      backgroundColor: color,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: "#fff",
-                      flexShrink: 0,
-                      marginTop: 2,
-                    }}
-                  >
-                    {msg.agent_name.charAt(0).toUpperCase()}
-                  </div>
-                ) : (
-                  <div style={{ width: 32, flexShrink: 0 }} />
-                )}
-
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  {isNewSpeaker && (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "baseline",
-                        gap: 8,
-                        marginBottom: 4,
-                      }}
-                    >
-                      <span style={{ color, fontSize: 13, fontWeight: 600 }}>
-                        {msg.agent_name}
-                      </span>
-                      <span style={{ color: "var(--room-text-muted)", fontSize: 11 }}>
-                        {formatTimestamp(msg.timestamp)}
-                      </span>
-                    </div>
-                  )}
-                  <div
-                    className="msg-content"
-                    style={{
-                      background: "var(--room-surface-light)",
-                      padding: "10px 14px",
-                      borderRadius: isNewSpeaker ? "4px 12px 12px 12px" : "12px",
-                      fontSize: 14,
-                      color: "var(--room-text)",
-                      lineHeight: 1.5,
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    <MessageContent content={msg.content} />
-                    {msg.read_by.length > 0 && (
-                      <div
-                        title={`Read by ${msg.read_by.length} agent${msg.read_by.length === 1 ? "" : "s"}`}
-                        style={{
-                          display: "flex",
-                          justifyContent: "flex-end",
-                          marginTop: 4,
-                          color: "var(--room-primary)",
-                          fontSize: 11,
-                          letterSpacing: -2,
-                        }}
-                      >
-                        ✓✓
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <Fragment key={msg.message_id}>
+                {divider}
+                {messageRow(msg, isNewSpeaker, color)}
+              </Fragment>
             );
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function systemBubble(msg: Message) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "center",
+        animation: "fadeIn 0.3s ease-out",
+      }}
+    >
+      <div
+        style={{
+          background: "rgba(52, 168, 83, 0.13)",
+          color: "var(--room-green)",
+          borderRadius: 20,
+          padding: "6px 16px",
+          fontSize: 12,
+        }}
+      >
+        {msg.content}
+      </div>
+    </div>
+  );
+}
+
+function messageRow(msg: Message, isNewSpeaker: boolean, color: string) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 12,
+        alignItems: "flex-start",
+        marginTop: !isNewSpeaker ? -8 : 0,
+        animation: "fadeIn 0.3s ease-out",
+      }}
+    >
+      {isNewSpeaker ? (
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: "50%",
+            backgroundColor: color,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 13,
+            fontWeight: 700,
+            color: "#fff",
+            flexShrink: 0,
+            marginTop: 2,
+          }}
+        >
+          {msg.agent_name.charAt(0).toUpperCase()}
+        </div>
+      ) : (
+        <div style={{ width: 32, flexShrink: 0 }} />
+      )}
+
+      <div style={{ minWidth: 0, flex: 1 }}>
+        {isNewSpeaker && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 8,
+              marginBottom: 4,
+            }}
+          >
+            <span style={{ color, fontSize: 13, fontWeight: 600 }}>
+              {msg.agent_name}
+            </span>
+            <span style={{ color: "var(--room-text-muted)", fontSize: 11 }}>
+              {formatTimestamp(msg.timestamp)}
+            </span>
+          </div>
+        )}
+        <div
+          className="msg-content"
+          style={{
+            background: "var(--room-surface-light)",
+            padding: "10px 14px",
+            borderRadius: isNewSpeaker ? "4px 12px 12px 12px" : "12px",
+            fontSize: 14,
+            color: "var(--room-text)",
+            lineHeight: 1.5,
+            wordBreak: "break-word",
+          }}
+        >
+          <MessageContent content={msg.content} />
+          {msg.read_by.length > 0 && (
+            <div
+              title={`Read by ${msg.read_by.length} agent${msg.read_by.length === 1 ? "" : "s"}`}
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                marginTop: 4,
+                color: "var(--room-primary)",
+                fontSize: 11,
+                letterSpacing: -2,
+              }}
+            >
+              ✓✓
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

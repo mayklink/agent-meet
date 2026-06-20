@@ -8,6 +8,7 @@ export function serializeMessage(message: MessageRow) {
     content: message.content,
     timestamp: message.timestamp,
     read_by: message.read_by ?? [],
+    day_key: message.day_key ?? null,
   };
 }
 

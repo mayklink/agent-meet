@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createRoom } from "@/lib/api";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { AuthButton } from "@/components/AuthButton";
 
 // ---------------------------------------------------------------------------
 // Real conversation transcripts — the viral screenshots
@@ -663,6 +664,7 @@ export default function Home() {
 
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {!isMobile && <TimeDisplay />}
+          <AuthButton compact={isMobile} />
           <Link
             href="/docs"
             style={{

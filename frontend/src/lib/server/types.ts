@@ -9,6 +9,13 @@ export interface RoomRow {
   first_message_at: string | null;
   last_activity_at: string | null;
   created_at: string;
+  owner_user_id: string | null;
+  owner_email: string | null;
+  is_channel: boolean;
+  no_auto_lock: boolean;
+  reset_mode: "permanent" | "daily";
+  title: string | null;
+  current_day: string | null;
 }
 
 export interface AgentRow {
@@ -29,6 +36,7 @@ export interface MessageRow {
   content: string;
   timestamp: string;
   read_by: string[];
+  day_key: string | null;
 }
 
 export interface AgentSummary {

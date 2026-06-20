@@ -10,13 +10,17 @@ import type { AgentRow, AgentSummary, MessageRow, RoomRow } from "./types";
 const MAX_ACTIVE_AGENTS = 20;
 
 const ROOM_COLS =
-  "room_code, creator_token, state, max_messages, message_count, lock_reason, locked_at, first_message_at, last_activity_at, created_at" as const;
+  "room_code, creator_token, state, max_messages, message_count, lock_reason, locked_at, first_message_at, last_activity_at, created_at, owner_user_id, owner_email, is_channel, no_auto_lock, reset_mode, title, current_day" as const;
 
 const AGENT_COLS =
   "agent_id, agent_token, room_code, agent_name, status, created_at, activated_at, left_at" as const;
 
 const MESSAGE_COLS =
-  "room_seq, agent_id, agent_name, content, created_at, read_by" as const;
+  "room_seq, agent_id, agent_name, content, created_at, read_by, day_key" as const;
+
+// Channels (persistent links) are capped per signed-in user.
+export const MAX_CHANNELS_PER_USER = 3;
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 
 function db() {
   return getAdmin();
@@ -30,6 +34,7 @@ function toMessageRow(row: Record<string, unknown>): MessageRow {
     content: row.content as string,
     timestamp: (row.timestamp ?? row.created_at) as string,
     read_by: (row.read_by ?? []) as string[],
+    day_key: (row.day_key ?? null) as string | null,
   };
 }
 
@@ -44,7 +49,15 @@ export class ApiError extends Error {
   }
 }
 
-export async function createRoom(maxMessages = 500): Promise<RoomRow> {
+export interface RoomOwner {
+  id: string;
+  email: string | null;
+}
+
+export async function createRoom(
+  maxMessages = 500,
+  owner?: RoomOwner | null
+): Promise<RoomRow> {
   const roomCode = generateRoomCode();
   const creatorToken = generateCreatorToken();
   const { data, error } = await db()
@@ -53,11 +66,121 @@ export async function createRoom(maxMessages = 500): Promise<RoomRow> {
       room_code: roomCode,
       creator_token: creatorToken,
       max_messages: maxMessages,
+      owner_user_id: owner?.id ?? null,
+      owner_email: owner?.email ?? null,
     })
     .select(ROOM_COLS)
     .single();
   if (error) throw new Error(error.message);
   return data as unknown as RoomRow;
+}
+
+// --- Channels: persistent, user-owned chat links ---------------------------
+
+export async function countUserChannels(userId: string): Promise<number> {
+  const { count, error } = await db()
+    .from("rooms")
+    .select("*", { count: "exact", head: true })
+    .eq("owner_user_id", userId)
+    .eq("is_channel", true);
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
+export async function createChannel(
+  owner: RoomOwner,
+  opts: { slug: string; title?: string; resetMode?: "permanent" | "daily" }
+): Promise<RoomRow> {
+  const slug = opts.slug.trim().toLowerCase();
+  if (!SLUG_RE.test(slug)) {
+    throw new ApiError(
+      422,
+      "invalid_slug",
+      "Link must be 3-40 chars: lowercase letters, numbers, and dashes only"
+    );
+  }
+
+  const count = await countUserChannels(owner.id);
+  if (count >= MAX_CHANNELS_PER_USER) {
+    throw new ApiError(
+      403,
+      "channel_limit_reached",
+      `Each user can keep up to ${MAX_CHANNELS_PER_USER} permanent links`,
+      { max_channels: MAX_CHANNELS_PER_USER }
+    );
+  }
+
+  const existing = await getRoom(slug);
+  if (existing) {
+    throw new ApiError(409, "slug_taken", "That link is already in use");
+  }
+
+  const creatorToken = generateCreatorToken();
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await db()
+    .from("rooms")
+    .insert({
+      room_code: slug,
+      creator_token: creatorToken,
+      max_messages: 10000,
+      owner_user_id: owner.id,
+      owner_email: owner.email,
+      is_channel: true,
+      no_auto_lock: true,
+      reset_mode: opts.resetMode ?? "permanent",
+      title: opts.title?.slice(0, 120) ?? null,
+      current_day: today,
+    })
+    .select(ROOM_COLS)
+    .single();
+  if (error) {
+    // Unique violation race on the slug.
+    if ((error as { code?: string }).code === "23505") {
+      throw new ApiError(409, "slug_taken", "That link is already in use");
+    }
+    throw new Error(error.message);
+  }
+  return data as unknown as RoomRow;
+}
+
+export interface OwnedRoomSummary {
+  room_code: string;
+  state: string;
+  is_channel: boolean;
+  reset_mode: "permanent" | "daily";
+  title: string | null;
+  message_count: number;
+  created_at: string;
+  last_activity_at: string | null;
+}
+
+export async function listUserRooms(userId: string): Promise<OwnedRoomSummary[]> {
+  const { data, error } = await db()
+    .from("rooms")
+    .select(
+      "room_code, state, is_channel, reset_mode, title, message_count, created_at, last_activity_at"
+    )
+    .eq("owner_user_id", userId)
+    .order("is_channel", { ascending: false })
+    .order("last_activity_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as OwnedRoomSummary[];
+}
+
+export async function deleteChannel(
+  userId: string,
+  slug: string
+): Promise<boolean> {
+  const room = await getRoom(slug);
+  if (!room || !room.is_channel || room.owner_user_id !== userId) return false;
+
+  // Remove dependent rows first (messages + agents reference room_code).
+  await db().from("messages").delete().eq("room_code", slug);
+  await db().from("agents").delete().eq("room_code", slug);
+  const { error } = await db().from("rooms").delete().eq("room_code", slug);
+  if (error) throw new Error(error.message);
+  return true;
 }
 
 export async function getRoom(roomCode: string): Promise<RoomRow | null> {
@@ -141,6 +264,9 @@ export async function getRoomStatus(roomCode: string) {
     first_message_at: room.first_message_at ?? undefined,
     locked_at: room.locked_at ?? undefined,
     lock_reason: room.lock_reason ?? undefined,
+    is_channel: room.is_channel,
+    reset_mode: room.reset_mode,
+    title: room.title ?? undefined,
   };
 }
 
@@ -269,7 +395,8 @@ export async function sendMessage(
     max_messages: number;
   };
 
-  if (row.room_message_count >= row.max_messages) {
+  // Channels never auto-lock — they are meant to stay on forever.
+  if (!room.no_auto_lock && row.room_message_count >= row.max_messages) {
     await lockRoom(roomCode, "max_messages_reached");
   }
 

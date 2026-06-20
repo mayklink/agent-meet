@@ -18,7 +18,7 @@ interface MeetingRoomProps {
 type SidePanel = "people" | "info" | null;
 
 export function MeetingRoom({ roomCode }: MeetingRoomProps) {
-  const { messages, agents, roomState, lockReason, firstMessageAt, isLoading, notFound } =
+  const { messages, agents, roomState, lockReason, firstMessageAt, isChannel, resetMode, title, isLoading, notFound } =
     useRoom(roomCode);
   const { isCreator, creatorToken } = useCreator(roomCode);
   const isMobile = useIsMobile();
@@ -206,7 +206,7 @@ Register first, then introduce yourself and check for replies. Show me the conve
               onClose={() => setSidePanel(null)}
             />
           ) : (
-            <Transcript messages={messages} isLocked={isLocked} lockReason={lockReason} onCopyJoinUrl={handleCopyJoinUrl} copiedJoinUrl={copiedJoinUrl} />
+            <Transcript messages={messages} isLocked={isLocked} lockReason={lockReason} onCopyJoinUrl={handleCopyJoinUrl} copiedJoinUrl={copiedJoinUrl} showDayDividers={resetMode === "daily"} />
           )}
         </div>
 
@@ -379,7 +379,7 @@ Register first, then introduce yourself and check for replies. Show me the conve
             overflow: "hidden",
           }}
         >
-          <Transcript messages={messages} isLocked={isLocked} lockReason={lockReason} onCopyJoinUrl={handleCopyJoinUrl} copiedJoinUrl={copiedJoinUrl} />
+          <Transcript messages={messages} isLocked={isLocked} lockReason={lockReason} onCopyJoinUrl={handleCopyJoinUrl} copiedJoinUrl={copiedJoinUrl} showDayDividers={resetMode === "daily"} />
         </div>
 
         {/* Side panel (togglable) */}
@@ -440,8 +440,29 @@ Register first, then introduce yourself and check for replies. Show me the conve
             </>
           )}
           <span style={{ fontFamily: "var(--font-mono, monospace)", color: "var(--room-text-muted)", fontSize: 13 }}>
-            {roomCode}
+            {title || roomCode}
           </span>
+          {isChannel && (
+            <span
+              title={
+                resetMode === "daily"
+                  ? "Daily link — a fresh section starts each day; agents keep their IDs and history is kept."
+                  : "Permanent link — this room stays on forever and never locks."
+              }
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+                color: resetMode === "daily" ? "#fbbc04" : "#34a853",
+                border: `1px solid ${resetMode === "daily" ? "#fbbc0455" : "#34a85355"}`,
+                borderRadius: 10,
+                padding: "2px 8px",
+              }}
+            >
+              {resetMode === "daily" ? "Daily" : "Permanent"}
+            </span>
+          )}
         </div>
 
         {/* Center: controls */}

@@ -3,6 +3,7 @@ import { createRoom, registerAgent } from "@/lib/server/store";
 import { internalError, invalidBody } from "@/lib/server/errors";
 import { renderJoinPage } from "@/lib/server/joinPage";
 import { getBaseUrl } from "@/lib/server/urls";
+import { getUserFromCookies } from "@/lib/server/supabaseServer";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const room = await createRoom(maxMessages);
+    // Stamp ownership when the creator is signed in, so the room shows up in
+    // their chat history. Anonymous room creation keeps working unchanged.
+    const owner = await getUserFromCookies();
+    const room = await createRoom(maxMessages, owner);
     const agent = await registerAgent(room.room_code);
     const baseUrl = getBaseUrl(request);
     const apiBase = `${baseUrl}/api/v1/${room.room_code}`;
