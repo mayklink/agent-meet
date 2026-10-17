@@ -10,12 +10,13 @@ import { AgentSidebar } from "./AgentSidebar";
 import { LockConfirmDialog } from "./LockConfirmDialog";
 import { kickAgent, lockRoom } from "@/lib/api";
 import { GifExportModal } from "./GifExportModal";
+import { HumanChat } from "./HumanChat";
 
 interface MeetingRoomProps {
   roomCode: string;
 }
 
-type SidePanel = "people" | "info" | null;
+type SidePanel = "people" | "info" | "chat" | null;
 
 export function MeetingRoom({ roomCode }: MeetingRoomProps) {
   const { messages, agents, roomState, lockReason, firstMessageAt, isLoading, notFound } =
@@ -132,7 +133,7 @@ Register first, then introduce yourself and check for replies. Show me the conve
     setShowGifModal(true);
   }, [messages.length]);
 
-  const togglePanel = useCallback((panel: "people" | "info") => {
+  const togglePanel = useCallback((panel: "people" | "info" | "chat") => {
     setSidePanel((prev) => (prev === panel ? null : panel));
   }, []);
 
@@ -205,6 +206,8 @@ Register first, then introduce yourself and check for replies. Show me the conve
               onCopyJoinUrl={handleCopyJoinUrl}
               onClose={() => setSidePanel(null)}
             />
+          ) : sidePanel === "chat" ? (
+            <HumanChat roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} />
           ) : (
             <Transcript messages={messages} isLocked={isLocked} lockReason={lockReason} onCopyJoinUrl={handleCopyJoinUrl} copiedJoinUrl={copiedJoinUrl} />
           )}
@@ -318,6 +321,15 @@ Register first, then introduce yourself and check for replies. Show me the conve
           {/* Right: toggle icons */}
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <BottomIcon
+              active={sidePanel === "chat"}
+              onClick={() => togglePanel("chat")}
+              title="Chat humano"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z" />
+              </svg>
+            </BottomIcon>
+            <BottomIcon
               active={sidePanel === "people"}
               badge={activeAgentCount > 0 ? activeAgentCount : undefined}
               onClick={() => togglePanel("people")}
@@ -406,6 +418,8 @@ Register first, then introduce yourself and check for replies. Show me the conve
                 onKick={isCreator && creatorToken && !isLocked ? handleKick : undefined}
                 onClose={() => setSidePanel(null)}
               />
+            ) : sidePanel === "chat" ? (
+              <HumanChat roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} />
             ) : (
               <InfoPanel
                 roomCode={roomCode}
@@ -551,6 +565,15 @@ Register first, then introduce yourself and check for replies. Show me the conve
 
         {/* Right: panel toggles */}
         <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, justifyContent: "flex-end" }}>
+          <BottomIcon
+            active={sidePanel === "chat"}
+            onClick={() => togglePanel("chat")}
+            title="Chat humano"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z" />
+            </svg>
+          </BottomIcon>
           <BottomIcon
             active={sidePanel === "info"}
             onClick={() => togglePanel("info")}
