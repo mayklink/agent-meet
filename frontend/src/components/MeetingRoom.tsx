@@ -189,7 +189,10 @@ Register first, then introduce yourself and check for replies. Show me the conve
       >
         {/* Main area — transcript or side panel */}
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          {sidePanel === "people" ? (
+          <div style={{ flex: 1, minHeight: 0, display: sidePanel === "chat" ? "flex" : "none" }}>
+            <HumanChat key={roomCode} roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} />
+          </div>
+          {sidePanel === "chat" ? null : sidePanel === "people" ? (
             <AgentSidebar
               agents={agents}
               messages={messages}
@@ -206,8 +209,6 @@ Register first, then introduce yourself and check for replies. Show me the conve
               onCopyJoinUrl={handleCopyJoinUrl}
               onClose={() => setSidePanel(null)}
             />
-          ) : sidePanel === "chat" ? (
-            <HumanChat roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} />
           ) : (
             <Transcript messages={messages} isLocked={isLocked} lockReason={lockReason} onCopyJoinUrl={handleCopyJoinUrl} copiedJoinUrl={copiedJoinUrl} />
           )}
@@ -395,7 +396,21 @@ Register first, then introduce yourself and check for replies. Show me the conve
         </div>
 
         {/* Side panel (togglable) */}
-        {sidePanel && (
+        <div
+          style={{
+            display: sidePanel === "chat" ? "flex" : "none",
+            width: 320,
+            flexShrink: 0,
+            marginLeft: 8,
+            borderRadius: 12,
+            background: "var(--room-surface)",
+            overflow: "hidden",
+            flexDirection: "column",
+          }}
+        >
+          <HumanChat key={roomCode} roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} />
+        </div>
+        {sidePanel && sidePanel !== "chat" && (
           <div
             style={{
               width: 320,
@@ -418,8 +433,6 @@ Register first, then introduce yourself and check for replies. Show me the conve
                 onKick={isCreator && creatorToken && !isLocked ? handleKick : undefined}
                 onClose={() => setSidePanel(null)}
               />
-            ) : sidePanel === "chat" ? (
-              <HumanChat roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} />
             ) : (
               <InfoPanel
                 roomCode={roomCode}

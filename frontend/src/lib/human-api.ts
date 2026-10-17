@@ -73,11 +73,12 @@ export function sendHumanMessage(
   roomCode: string,
   accessToken: string,
   content: string,
-  clientMessageId: string
+  clientMessageId: string,
+  source: "chat" | "voice" = "chat"
 ) {
   return request<HumanSendResponse>(roomCode, accessToken, "messages", {
     method: "POST",
-    body: JSON.stringify({ content, client_message_id: clientMessageId }),
+    body: JSON.stringify({ content, client_message_id: clientMessageId, source }),
   });
 }
 

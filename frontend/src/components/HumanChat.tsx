@@ -2,6 +2,8 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { humanAuthSupabase } from "@/lib/supabase";
+import { useSpeech } from "@/hooks/useSpeech";
+import { getSpeechStatusMessage } from "@/lib/speech";
 import {
   getHumanSession,
   getHumanPresence,
@@ -23,6 +25,7 @@ interface HumanChatProps {
 interface PendingMessage {
   content: string;
   clientMessageId: string;
+  source: "chat" | "voice";
 }
 
 const controlStyle = {
@@ -39,6 +42,7 @@ const controlStyle = {
 export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanChatProps) {
   const [authLoading, setAuthLoading] = useState(true);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -49,23 +53,80 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
   const [pending, setPending] = useState<PendingMessage | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draftSource, setDraftSource] = useState<"chat" | "voice">("chat");
+  const [pendingStorageReady, setPendingStorageReady] = useState(false);
+  const [pendingStorageWarning, setPendingStorageWarning] = useState(false);
+
+  const pendingStorageKey = userId
+    ? `agentmeet:pending:${encodeURIComponent(roomCode)}:${encodeURIComponent(userId)}`
+    : null;
+
+  const appendVoiceText = (text: string) => {
+    setDraft((current) => current.trim() ? `${current.trimEnd()} ${text}` : text);
+    setDraftSource("voice");
+  };
+  const speech = useSpeech({
+    roomCode,
+    enabled: Boolean(accessToken && session && !isLocked),
+    onFinalText: appendVoiceText,
+  });
+
+  useEffect(() => {
+    if (!pendingStorageKey) {
+      setPending(null);
+      setPendingStorageReady(true);
+      return;
+    }
+    setPendingStorageReady(false);
+    try {
+      const saved = sessionStorage.getItem(pendingStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<PendingMessage>;
+        if (typeof parsed.content === "string" && typeof parsed.clientMessageId === "string") {
+          setPending({
+            content: parsed.content,
+            clientMessageId: parsed.clientMessageId,
+            source: parsed.source === "voice" ? "voice" : "chat",
+          });
+        } else {
+          setPending(null);
+        }
+      } else {
+        setPending(null);
+      }
+    } catch {
+      setPending(null);
+    }
+    setPendingStorageReady(true);
+  }, [pendingStorageKey]);
+
+  useEffect(() => {
+    if (!pendingStorageKey || !pendingStorageReady) return;
+    try {
+      if (pending) sessionStorage.setItem(pendingStorageKey, JSON.stringify(pending));
+      else sessionStorage.removeItem(pendingStorageKey);
+    } catch {
+      setPendingStorageWarning(Boolean(pending));
+    }
+  }, [pending, pendingStorageKey, pendingStorageReady]);
 
   useEffect(() => {
     let active = true;
     void humanAuthSupabase.auth.getSession().then(({ data }) => {
       if (active) {
         setAccessToken(data.session?.access_token ?? null);
+        setUserId(data.session?.user.id ?? null);
         setAuthLoading(false);
       }
     });
 
     const { data } = humanAuthSupabase.auth.onAuthStateChange((_event, authSession) => {
       setAccessToken(authSession?.access_token ?? null);
+      setUserId(authSession?.user.id ?? null);
       setAuthLoading(false);
       if (!authSession) {
         setSession(null);
         setParticipants([]);
-        setPending(null);
       }
     });
 
@@ -164,10 +225,11 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
 
   async function handleSend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!accessToken || !session || isLocked || busy) return;
+    if (!accessToken || !session || isLocked || busy || !pendingStorageReady || speech.capturing) return;
     const message = pending ?? {
       content: draft.trim(),
       clientMessageId: crypto.randomUUID(),
+      source: draftSource,
     };
     if (!message.content) return;
 
@@ -175,8 +237,9 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
     setBusy(true);
     setError(null);
     try {
-      await sendHumanMessage(roomCode, accessToken, message.content, message.clientMessageId);
+      await sendHumanMessage(roomCode, accessToken, message.content, message.clientMessageId, message.source);
       setDraft("");
+      setDraftSource("chat");
       setPending(null);
     } catch (cause) {
       // Retain the original id and body. Retrying after an uncertain network
@@ -192,13 +255,19 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
     setBusy(true);
     setError(null);
     try {
-      if (session) await leaveHumanSession(roomCode, accessToken);
-      const { error: signOutError } = await humanAuthSupabase.auth.signOut();
-      if (signOutError) throw signOutError;
+      const [leaveResult, signOutResult] = await Promise.allSettled([
+        session ? leaveHumanSession(roomCode, accessToken) : Promise.resolve(),
+        humanAuthSupabase.auth.signOut(),
+      ]);
+      if (signOutResult.status === "rejected") throw signOutResult.reason;
+      if (signOutResult.value.error) throw signOutResult.value.error;
       setSession(null);
       setParticipants([]);
-      setPending(null);
       setDraft("");
+      setDraftSource("chat");
+      if (leaveResult.status === "rejected") {
+        setError("Sua conta foi desconectada, mas a saída da sala não foi confirmada pelo servidor.");
+      }
     } catch (cause) {
       setError(errorText(cause, "Não foi possível sair da sala."));
     } finally {
@@ -254,6 +323,7 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
             <span id="human-invite-help" style={{ color: "var(--room-text-muted)", fontSize: 11 }}>Use o token compartilhado pelo criador da sala.</span>
           </label>}
           <button type="submit" disabled={busy || !displayName.trim() || isLocked} style={primaryButtonStyle}>{isLocked ? "Sala encerrada" : busy ? "Entrando…" : "Participar"}</button>
+          <button type="button" onClick={() => void handleLeave()} disabled={busy} style={quietButtonStyle}>{busy ? "Aguarde…" : "Sair da conta"}</button>
         </form>
       ) : (
         <>
@@ -272,14 +342,21 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
           </div>
           <form onSubmit={handleSend} style={{ padding: 12, borderTop: "1px solid var(--room-border)", flexShrink: 0 }}>
             <label htmlFor="human-message" style={labelStyle}>Sua mensagem</label>
-            <textarea id="human-message" value={pending?.content ?? draft} onChange={(event) => setDraft(event.target.value)} disabled={Boolean(pending) || busy || isLocked} maxLength={4000} rows={3} style={{ ...controlStyle, resize: "vertical", marginTop: 6, fontFamily: "inherit" }} placeholder={isLocked ? "A sala foi encerrada" : "Escreva uma mensagem…"} />
+            <textarea id="human-message" value={pending?.content ?? draft} onChange={(event) => { setDraft(event.target.value); if (draftSource !== "voice") setDraftSource("chat"); }} disabled={Boolean(pending) || busy || isLocked || !pendingStorageReady} maxLength={4000} rows={3} style={{ ...controlStyle, resize: "vertical", marginTop: 6, fontFamily: "inherit" }} placeholder={isLocked ? "A sala foi encerrada" : "Escreva ou dite uma mensagem…"} />
+            {speech.preview && <p aria-live="polite" style={{ margin: "7px 0 0", color: "var(--room-text-secondary)", fontSize: 12 }}><span style={{ color: "var(--room-text-muted)" }}>Prévia: </span>{speech.preview}</p>}
+            {speech.status !== "idle" && <p role="status" aria-live="polite" style={{ margin: "7px 0 0", color: speech.status === "permission-denied" || speech.status === "error" || speech.status === "network" || speech.status === "no-speech" ? "#ffb4ab" : "var(--room-text-secondary)", fontSize: 11 }}>{getSpeechStatusMessage(speech.status)}</p>}
+            <p style={{ margin: "7px 0 0", color: "var(--room-text-muted)", fontSize: 10 }}>O áudio não será salvo. O navegador pode enviar a fala a um serviço externo de reconhecimento.</p>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
               <button type="button" onClick={() => void handleLeave()} disabled={busy} style={quietButtonStyle}>{busy ? "Aguarde…" : "Sair"}</button>
-              <button type="submit" disabled={busy || isLocked || !(pending?.content ?? draft).trim()} style={primaryButtonStyle}>
+              <button type="button" onClick={speech.capturing ? speech.stop : speech.start} disabled={Boolean(pending) || busy || isLocked} aria-label={speech.capturing ? "Parar transcrição" : "Iniciar transcrição de voz"} style={quietButtonStyle}>
+                {speech.capturing ? (speech.status === "stopping" ? "Finalizando…" : "Parar voz") : "Falar"}
+              </button>
+              <button type="submit" disabled={busy || isLocked || !pendingStorageReady || speech.capturing || !(pending?.content ?? draft).trim()} style={primaryButtonStyle}>
                 {pending ? (busy ? "Enviando…" : "Tentar novamente") : busy ? "Enviando…" : "Enviar"}
               </button>
             </div>
             {pending && <p role="status" style={{ margin: "7px 0 0", color: "var(--room-text-muted)", fontSize: 11 }}>A mensagem permanece salva para nova tentativa com o mesmo identificador.</p>}
+            {pendingStorageWarning && <p role="alert" style={{ margin: "7px 0 0", color: "#ffb4ab", fontSize: 11 }}>O navegador não conseguiu guardar o retry. Mantenha este painel aberto até a confirmação.</p>}
           </form>
         </>
       )}
