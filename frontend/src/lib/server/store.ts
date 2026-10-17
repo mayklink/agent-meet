@@ -98,6 +98,8 @@ export async function getAgentByToken(
     .eq("agent_token", agentToken)
     .maybeSingle();
   if (error) throw new Error(error.message);
+  // Human identities require Auth; their internal token is never a credential.
+  if (data?.agent_id?.startsWith("hu_")) return null;
   return (data as unknown as AgentRow) ?? null;
 }
 

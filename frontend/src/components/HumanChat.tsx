@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { humanAuthSupabase } from "@/lib/supabase";
 import { useSpeech } from "@/hooks/useSpeech";
 import { getSpeechStatusMessage } from "@/lib/speech";
+import { getHumanPendingStorageKey, parseHumanPendingMessage, type HumanPendingMessage } from "@/lib/human-pending";
 import {
   getHumanSession,
   getHumanPresence,
@@ -11,6 +12,8 @@ import {
   joinHumanSession,
   leaveHumanSession,
   sendHumanMessage,
+  createHumanInvite,
+  HumanApiError,
   type HumanPresenceParticipant,
   type HumanSession,
 } from "@/lib/human-api";
@@ -20,12 +23,6 @@ interface HumanChatProps {
   creatorToken?: string | null;
   isLocked: boolean;
   onClose?: () => void;
-}
-
-interface PendingMessage {
-  content: string;
-  clientMessageId: string;
-  source: "chat" | "voice";
 }
 
 const controlStyle = {
@@ -50,81 +47,97 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
   const [session, setSession] = useState<HumanSession | null>(null);
   const [participants, setParticipants] = useState<HumanPresenceParticipant[]>([]);
   const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState<PendingMessage | null>(null);
+  const [pending, setPending] = useState<HumanPendingMessage | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draftSource, setDraftSource] = useState<"chat" | "voice">("chat");
-  const [pendingStorageReady, setPendingStorageReady] = useState(false);
   const [pendingStorageWarning, setPendingStorageWarning] = useState(false);
+  const [pendingStorageOwner, setPendingStorageOwner] = useState<string | null>(null);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [inviteExpiresAt, setInviteExpiresAt] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const previousUserId = useRef<string | null>(null);
 
   const pendingStorageKey = userId
-    ? `agentmeet:pending:${encodeURIComponent(roomCode)}:${encodeURIComponent(userId)}`
+    ? getHumanPendingStorageKey(roomCode, userId)
     : null;
+  const pendingStorageReady = pendingStorageKey !== null && pendingStorageOwner === pendingStorageKey;
+  const currentPending = pendingStorageReady ? pending : null;
 
   const appendVoiceText = (text: string) => {
     setDraft((current) => current.trim() ? `${current.trimEnd()} ${text}` : text);
     setDraftSource("voice");
   };
-  const speech = useSpeech({
+  const { abort: abortSpeech, ...speech } = useSpeech({
     roomCode,
-    enabled: Boolean(accessToken && session && !isLocked),
+    enabled: Boolean(accessToken && session && !isLocked && !currentPending && !busy),
     onFinalText: appendVoiceText,
   });
 
   useEffect(() => {
     if (!pendingStorageKey) {
-      setPending(null);
-      setPendingStorageReady(true);
       return;
     }
-    setPendingStorageReady(false);
+    setPendingStorageWarning(false);
+    setPendingStorageOwner(null);
     try {
-      const saved = sessionStorage.getItem(pendingStorageKey);
-      if (saved) {
-        const parsed = JSON.parse(saved) as Partial<PendingMessage>;
-        if (typeof parsed.content === "string" && typeof parsed.clientMessageId === "string") {
-          setPending({
-            content: parsed.content,
-            clientMessageId: parsed.clientMessageId,
-            source: parsed.source === "voice" ? "voice" : "chat",
-          });
-        } else {
-          setPending(null);
-        }
-      } else {
-        setPending(null);
-      }
+      setPending(parseHumanPendingMessage(sessionStorage.getItem(pendingStorageKey)));
     } catch {
       setPending(null);
     }
-    setPendingStorageReady(true);
+    setPendingStorageOwner(pendingStorageKey);
   }, [pendingStorageKey]);
 
   useEffect(() => {
-    if (!pendingStorageKey || !pendingStorageReady) return;
+    if (!pendingStorageKey || pendingStorageOwner !== pendingStorageKey) return;
     try {
       if (pending) sessionStorage.setItem(pendingStorageKey, JSON.stringify(pending));
       else sessionStorage.removeItem(pendingStorageKey);
     } catch {
       setPendingStorageWarning(Boolean(pending));
+      return;
     }
-  }, [pending, pendingStorageKey, pendingStorageReady]);
+    setPendingStorageWarning(false);
+  }, [pending, pendingStorageKey, pendingStorageOwner]);
+
+  useEffect(() => {
+    if (previousUserId.current === userId) return;
+    previousUserId.current = userId;
+    setDraft("");
+    setDraftSource("chat");
+    setDisplayName("");
+    setInvitationToken("");
+    setInviteToken(null);
+    setInviteExpiresAt(null);
+  }, [userId]);
 
   useEffect(() => {
     let active = true;
-    void humanAuthSupabase.auth.getSession().then(({ data }) => {
-      if (active) {
-        setAccessToken(data.session?.access_token ?? null);
-        setUserId(data.session?.user.id ?? null);
-        setAuthLoading(false);
-      }
-    });
+    void humanAuthSupabase.auth.getSession()
+      .then(({ data }) => {
+        if (active) {
+          setAccessToken(data.session?.access_token ?? null);
+          setUserId(data.session?.user.id ?? null);
+          setAuthLoading(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAccessToken(null);
+          setUserId(null);
+          setAuthLoading(false);
+          setError("Não foi possível recuperar sua sessão. Entre novamente para continuar.");
+        }
+      });
 
-    const { data } = humanAuthSupabase.auth.onAuthStateChange((_event, authSession) => {
+    const { data } = humanAuthSupabase.auth.onAuthStateChange((event, authSession) => {
       setAccessToken(authSession?.access_token ?? null);
       setUserId(authSession?.user.id ?? null);
       setAuthLoading(false);
-      if (!authSession) {
+      if (!authSession || event === "SIGNED_IN") {
+        abortSpeech();
         setSession(null);
         setParticipants([]);
       }
@@ -134,7 +147,7 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
       active = false;
       data.subscription.unsubscribe();
     };
-  }, []);
+  }, [abortSpeech]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -151,13 +164,19 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
           setDisplayName(result.display_name);
         }
       })
-      .catch(() => {
-        if (active) setSession(null);
+      .catch((cause: unknown) => {
+        if (active) {
+          if (isHumanSessionDenied(cause)) abortSpeech();
+          setSession(null);
+          if (cause instanceof HumanApiError && cause.status === 403) {
+            setError("Sua sessão não está mais autorizada nesta sala. Entre novamente com um convite válido.");
+          }
+        }
       });
     return () => {
       active = false;
     };
-  }, [roomCode, accessToken]);
+  }, [roomCode, accessToken, abortSpeech]);
 
   useEffect(() => {
     if (!accessToken || !session) return;
@@ -166,16 +185,32 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
       try {
         const result = await getHumanPresence(roomCode, accessToken);
         if (active) setParticipants(result.participants ?? []);
-      } catch {
-        if (active) setError("Não foi possível atualizar a presença dos participantes.");
+      } catch (cause: unknown) {
+        if (!active) return;
+        if (isHumanSessionDenied(cause)) {
+          abortSpeech();
+          setSession(null);
+          setParticipants([]);
+          setError("Sua sessão da sala expirou. Entre novamente para continuar.");
+          return;
+        }
+        setError("Não foi possível atualizar a presença dos participantes.");
       }
     };
     const heartbeat = async () => {
       try {
         await heartbeatHumanPresence(roomCode, accessToken);
         await refreshPresence();
-      } catch {
-        if (active) setError("Não foi possível atualizar sua presença na sala.");
+      } catch (cause: unknown) {
+        if (!active) return;
+        if (isHumanSessionDenied(cause)) {
+          abortSpeech();
+          setSession(null);
+          setParticipants([]);
+          setError("Sua sessão da sala expirou. Entre novamente para continuar.");
+          return;
+        }
+        setError("Não foi possível atualizar sua presença na sala.");
       }
     };
     void heartbeat();
@@ -184,7 +219,7 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
       active = false;
       window.clearInterval(interval);
     };
-  }, [accessToken, roomCode, session]);
+  }, [accessToken, roomCode, session, abortSpeech]);
 
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -223,10 +258,41 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
     }
   }
 
+  async function handleCreateInvite() {
+    if (!accessToken || !creatorToken || isLocked || inviteBusy) return;
+    setInviteBusy(true);
+    setInviteError(null);
+    setInviteCopied(false);
+    setInviteToken(null);
+    setInviteExpiresAt(null);
+    try {
+      const result = await createHumanInvite(roomCode, accessToken, creatorToken);
+      setInviteToken(result.invite_token);
+      setInviteExpiresAt(result.expires_at);
+    } catch (cause) {
+      setInviteError(errorText(cause, "Não foi possível gerar um convite para participantes humanos."));
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+
+  async function handleCopyInvite() {
+    if (!inviteToken) return;
+    try {
+      await navigator.clipboard.writeText(inviteToken);
+      setInviteCopied(true);
+    } catch {
+      setInviteError("Não foi possível copiar. Selecione e copie o convite exibido.");
+    }
+  }
+
   async function handleSend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!accessToken || !session || isLocked || busy || !pendingStorageReady || speech.capturing) return;
-    const message = pending ?? {
+    if (!accessToken || !session || isLocked || busy || !pendingStorageReady) return;
+    // Invalidate recognition callbacks synchronously before freezing the draft
+    // into a retryable request. Late browser events cannot change this payload.
+    abortSpeech();
+    const message = currentPending ?? {
       content: draft.trim(),
       clientMessageId: crypto.randomUUID(),
       source: draftSource,
@@ -234,6 +300,7 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
     if (!message.content) return;
 
     setPending(message);
+    setPendingStorageOwner(pendingStorageKey);
     setBusy(true);
     setError(null);
     try {
@@ -299,6 +366,25 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
 
       {error && <div role="alert" style={{ margin: "10px 12px 0", color: "#ffb4ab", background: "rgba(179,38,30,.14)", borderRadius: 7, padding: "8px 10px", fontSize: 12 }}>{error}</div>}
 
+      {accessToken && creatorToken && (
+        <aside aria-label="Convite para participantes humanos" style={{ margin: "10px 12px 0", padding: 10, borderRadius: 8, background: "var(--room-bg)", border: "1px solid var(--room-border)" }}>
+          <strong style={{ display: "block", fontSize: 12 }}>Convite humano</strong>
+          <p style={{ margin: "5px 0 8px", color: "var(--room-text-secondary)", fontSize: 11, lineHeight: 1.4 }}>Permite apenas participar desta sala; não concede controle de criador. Cada convite expira em 24 horas e gerar outro invalida o anterior.</p>
+          <button type="button" onClick={() => void handleCreateInvite()} disabled={inviteBusy || isLocked} style={quietButtonStyle}>
+            {inviteBusy ? "Gerando convite…" : "Gerar convite humano"}
+          </button>
+          {inviteToken && <div style={{ marginTop: 8 }}>
+            <label htmlFor="human-generated-invite" style={labelStyle}>Convite para compartilhar</label>
+            <input id="human-generated-invite" readOnly value={inviteToken} onFocus={(event) => event.currentTarget.select()} style={{ ...controlStyle, marginTop: 5, fontFamily: "var(--font-mono, monospace)", fontSize: 11 }} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginTop: 6 }}>
+              <span style={{ color: "var(--room-text-muted)", fontSize: 10 }}>Expira: {formatExpiry(inviteExpiresAt)}</span>
+              <button type="button" onClick={() => void handleCopyInvite()} style={quietButtonStyle}>{inviteCopied ? "Copiado" : "Copiar"}</button>
+            </div>
+          </div>}
+          {inviteError && <p role="alert" style={{ margin: "7px 0 0", color: "#ffb4ab", fontSize: 11 }}>{inviteError}</p>}
+        </aside>
+      )}
+
       {authLoading ? (
         <p role="status" style={{ padding: 16, color: "var(--room-text-secondary)", fontSize: 13 }}>Verificando acesso…</p>
       ) : !accessToken ? (
@@ -342,21 +428,21 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
           </div>
           <form onSubmit={handleSend} style={{ padding: 12, borderTop: "1px solid var(--room-border)", flexShrink: 0 }}>
             <label htmlFor="human-message" style={labelStyle}>Sua mensagem</label>
-            <textarea id="human-message" value={pending?.content ?? draft} onChange={(event) => { setDraft(event.target.value); if (draftSource !== "voice") setDraftSource("chat"); }} disabled={Boolean(pending) || busy || isLocked || !pendingStorageReady} maxLength={4000} rows={3} style={{ ...controlStyle, resize: "vertical", marginTop: 6, fontFamily: "inherit" }} placeholder={isLocked ? "A sala foi encerrada" : "Escreva ou dite uma mensagem…"} />
+            <textarea id="human-message" value={currentPending?.content ?? draft} onChange={(event) => { setDraft(event.target.value); if (draftSource !== "voice") setDraftSource("chat"); }} disabled={Boolean(currentPending) || busy || isLocked || !pendingStorageReady} maxLength={4000} rows={3} style={{ ...controlStyle, resize: "vertical", marginTop: 6, fontFamily: "inherit" }} placeholder={isLocked ? "A sala foi encerrada" : "Escreva ou dite uma mensagem…"} />
             {speech.preview && <p aria-live="polite" style={{ margin: "7px 0 0", color: "var(--room-text-secondary)", fontSize: 12 }}><span style={{ color: "var(--room-text-muted)" }}>Prévia: </span>{speech.preview}</p>}
             {speech.status !== "idle" && <p role="status" aria-live="polite" style={{ margin: "7px 0 0", color: speech.status === "permission-denied" || speech.status === "error" || speech.status === "network" || speech.status === "no-speech" ? "#ffb4ab" : "var(--room-text-secondary)", fontSize: 11 }}>{getSpeechStatusMessage(speech.status)}</p>}
             <p style={{ margin: "7px 0 0", color: "var(--room-text-muted)", fontSize: 10 }}>O áudio não será salvo. O navegador pode enviar a fala a um serviço externo de reconhecimento.</p>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
               <button type="button" onClick={() => void handleLeave()} disabled={busy} style={quietButtonStyle}>{busy ? "Aguarde…" : "Sair"}</button>
-              <button type="button" onClick={speech.capturing ? speech.stop : speech.start} disabled={Boolean(pending) || busy || isLocked} aria-label={speech.capturing ? "Parar transcrição" : "Iniciar transcrição de voz"} style={quietButtonStyle}>
+              <button type="button" onClick={speech.capturing ? speech.stop : speech.start} disabled={Boolean(currentPending) || busy || isLocked || speech.status === "stopping"} aria-label={speech.capturing ? "Parar transcrição" : "Iniciar transcrição de voz"} style={quietButtonStyle}>
                 {speech.capturing ? (speech.status === "stopping" ? "Finalizando…" : "Parar voz") : "Falar"}
               </button>
-              <button type="submit" disabled={busy || isLocked || !pendingStorageReady || speech.capturing || !(pending?.content ?? draft).trim()} style={primaryButtonStyle}>
-                {pending ? (busy ? "Enviando…" : "Tentar novamente") : busy ? "Enviando…" : "Enviar"}
+              <button type="submit" disabled={busy || isLocked || !pendingStorageReady || speech.capturing || !(currentPending?.content ?? draft).trim()} style={primaryButtonStyle}>
+                {currentPending ? (busy ? "Enviando…" : "Tentar novamente") : busy ? "Enviando…" : "Enviar"}
               </button>
             </div>
-            {pending && <p role="status" style={{ margin: "7px 0 0", color: "var(--room-text-muted)", fontSize: 11 }}>A mensagem permanece salva para nova tentativa com o mesmo identificador.</p>}
-            {pendingStorageWarning && <p role="alert" style={{ margin: "7px 0 0", color: "#ffb4ab", fontSize: 11 }}>O navegador não conseguiu guardar o retry. Mantenha este painel aberto até a confirmação.</p>}
+            {currentPending && <p role="status" style={{ margin: "7px 0 0", color: "var(--room-text-muted)", fontSize: 11 }}>A mensagem permanece salva para nova tentativa com o mesmo identificador.</p>}
+            {pendingStorageWarning && <p role="alert" style={{ margin: "7px 0 0", color: "#ffb4ab", fontSize: 11 }}>O navegador não conseguiu guardar a nova tentativa. Mantenha este painel aberto até a confirmação.</p>}
           </form>
         </>
       )}
@@ -366,6 +452,16 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
 
 function errorText(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function isHumanSessionDenied(error: unknown): error is HumanApiError {
+  return error instanceof HumanApiError && (error.status === 401 || error.status === 403);
+}
+
+function formatExpiry(value: string | null) {
+  if (!value) return "em 24 horas";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "em 24 horas" : date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
 
 const labelStyle = { display: "flex", flexDirection: "column" as const, gap: 6, color: "var(--room-text-secondary)", fontSize: 12, fontWeight: 500 };

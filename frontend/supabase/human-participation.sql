@@ -1,5 +1,13 @@
 -- Additive only. Apply once to the existing PostgreSQL/Supabase database.
 BEGIN;
+CREATE TABLE public.human_invites (
+ token_hash text PRIMARY KEY,
+ room_code varchar(14) NOT NULL REFERENCES public.rooms(room_code),
+ expires_at timestamptz NOT NULL DEFAULT now()+interval '24 hours'
+);
+ALTER TABLE public.human_invites ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.human_invites FROM PUBLIC,anon,authenticated;
+GRANT ALL ON public.human_invites TO service_role;
 CREATE TABLE public.human_sessions (
  room_code varchar(14) NOT NULL REFERENCES public.rooms(room_code),
  user_id uuid NOT NULL,
@@ -34,7 +42,7 @@ BEGIN
   SELECT * INTO a FROM agents WHERE agent_id=s.participant_id FOR UPDATE;
   IF a.status='kicked' THEN RAISE EXCEPTION 'human:forbidden'; END IF;
  ELSE
-  IF p_creator_token IS NULL OR p_creator_token<>r.creator_token THEN RAISE EXCEPTION 'human:forbidden'; END IF;
+  IF p_creator_token IS NULL OR (p_creator_token<>r.creator_token AND NOT EXISTS(SELECT 1 FROM human_invites WHERE token_hash=encode(sha256(convert_to(p_creator_token,'UTF8')),'hex') AND room_code=p_room_code AND expires_at>now())) THEN RAISE EXCEPTION 'human:forbidden'; END IF;
  END IF;
  IF length(trim(p_display_name)) NOT BETWEEN 1 AND 100 THEN RAISE EXCEPTION 'human:invalid_request'; END IF;
  IF s.participant_id IS NULL OR a.status<>'active' THEN
@@ -102,4 +110,20 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.human_join(text,uuid,text,text), public.human_message(text,uuid,uuid,text,text), public.human_session(text,uuid,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.human_join(text,uuid,text,text), public.human_message(text,uuid,uuid,text,text), public.human_session(text,uuid,text) TO service_role;
+
+CREATE FUNCTION public.human_create_invite(p_room_code text,p_creator_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
+DECLARE r rooms; token text; expiry timestamptz:=now()+interval '24 hours';
+BEGIN
+ SELECT * INTO r FROM rooms WHERE room_code=p_room_code FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'human:room_not_found'; END IF;
+ IF r.creator_token<>p_creator_token OR p_creator_token IS NULL THEN RAISE EXCEPTION 'human:forbidden'; END IF;
+ IF r.state<>'active' THEN RAISE EXCEPTION 'human:room_locked'; END IF;
+ DELETE FROM human_invites WHERE room_code=p_room_code;
+ token:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');
+ INSERT INTO human_invites VALUES(encode(sha256(convert_to(token,'UTF8')),'hex'),p_room_code,expiry);
+ RETURN jsonb_build_object('invite_token',token,'expires_at',expiry);
+END $$;
+REVOKE ALL ON FUNCTION public.human_create_invite(text,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.human_create_invite(text,text) TO service_role;
 COMMIT;

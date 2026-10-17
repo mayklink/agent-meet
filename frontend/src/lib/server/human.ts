@@ -13,7 +13,13 @@ export function response(data: unknown, status=200) {
 }
 export async function authenticate(request: Request): Promise<string> {
  const origin=request.headers.get('origin');
- if (origin && origin!==new URL(request.url).origin) throw new HumanError(403,'origin_rejected','Origem não permitida.');
+ // Next.js can normalize request.url to an internal hostname behind a proxy.
+ // Host retains the browser-facing authority; do not trust forwarded-host input.
+ if (origin) {
+  let matches=false;
+  try {const parsed=new URL(origin);matches=['http:','https:'].includes(parsed.protocol)&&parsed.host===(request.headers.get('host')??new URL(request.url).host); }catch{}
+  if(!matches) throw new HumanError(403,'origin_rejected','Origem não permitida.');
+ }
  const token=request.headers.get('authorization')?.match(/^Bearer ([^\s]+)$/i)?.[1];
  if (!token) throw new HumanError(401,'unauthorized','Entre na sua conta.');
  const {data,error}=await getAdmin().auth.getUser(token);

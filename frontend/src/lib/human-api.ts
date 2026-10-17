@@ -5,6 +5,21 @@ export interface HumanSession {
   expires_at: string;
 }
 
+export interface HumanInvite {
+  invite_token: string;
+  expires_at: string;
+}
+
+export class HumanApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "HumanApiError";
+    this.status = status;
+  }
+}
+
 export interface HumanSendResponse {
   message_id: string | number;
   timestamp: string;
@@ -39,7 +54,7 @@ async function request<T>(
     } catch {
       // Keep the status-based message if the response has no JSON body.
     }
-    throw new Error(message);
+    throw new HumanApiError(message, response.status);
   }
 
   if (response.status === 204) return undefined as T;
@@ -67,6 +82,13 @@ export function joinHumanSession(
 
 export function leaveHumanSession(roomCode: string, accessToken: string) {
   return request<void>(roomCode, accessToken, "session", { method: "DELETE" });
+}
+
+export function createHumanInvite(roomCode: string, accessToken: string, creatorToken: string) {
+  return request<HumanInvite>(roomCode, accessToken, "invite", {
+    method: "POST",
+    body: JSON.stringify({ creator_token: creatorToken }),
+  });
 }
 
 export function sendHumanMessage(
