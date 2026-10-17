@@ -8,7 +8,10 @@ export type SpeechStatus =
   | "error"
   | "permission-denied"
   | "no-speech"
-  | "network";
+  | "network"
+  | "muted"
+  | "paused"
+  | "sending";
 
 export interface SpeechResultLike {
   readonly isFinal: boolean;
@@ -61,17 +64,23 @@ export function getSpeechStatusMessage(status: SpeechStatus): string {
     case "requesting":
       return "Solicitando acesso ao microfone…";
     case "listening":
-      return "Ouvindo em português do Brasil… O texto final ficará no rascunho para sua revisão.";
+      return "Ouvindo em português do Brasil. A mensagem será enviada após uma pausa na fala.";
     case "stopping":
       return "Finalizando a transcrição…";
     case "final":
-      return "Texto de voz adicionado ao rascunho. Revise antes de enviar.";
+      return "Fala reconhecida.";
     case "permission-denied":
       return "A permissão do microfone foi negada. Autorize o microfone nas configurações do navegador ou digite sua mensagem.";
     case "no-speech":
       return "Nenhuma fala foi reconhecida. Tente novamente ou digite sua mensagem.";
     case "network":
       return "O serviço de reconhecimento de voz está indisponível pela rede. Tente novamente ou digite sua mensagem.";
+    case "muted":
+      return "Microfone mutado. Ative para falar e enviar mensagens por voz.";
+    case "paused":
+      return "Transcrição pausada enquanto a mensagem é confirmada.";
+    case "sending":
+      return "Enviando mensagem de voz…";
     case "error":
       return "A transcrição de voz encontrou um erro. Tente novamente ou digite sua mensagem.";
     case "idle":

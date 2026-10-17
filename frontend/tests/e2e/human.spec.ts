@@ -26,13 +26,19 @@ test('HTTP agent lifecycle, aliases, read receipts and human isolation',async({r
 
 test('human login, persisted chat, reload and uncertain-network retry',async({page,request})=>{
  const room=await (await request.post('/api/v1/rooms',{data:{max_messages:10}})).json();await enter(page,room);
+ const membershipRefresh=page.waitForResponse(response=>response.url().includes(`/api/human/rooms/${room.room_code}/session`)&&response.status()===200);
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+ await membershipRefresh;
+ await expect(page.getByLabel('Sua mensagem',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Participar',exact:true})).toHaveCount(0);
  await page.getByLabel('Sua mensagem',{exact:true}).fill('Olá da participante humana');
  let committed=false;
  await page.route(`**/api/human/rooms/${room.room_code}/messages`,async route=>{if(!committed){committed=true;await route.fetch();await route.abort('failed');}else await route.continue();});
  await page.getByRole('button',{name:'Enviar',exact:true}).click();
  await expect(page.getByRole('button',{name:'Tentar novamente',exact:true})).toBeVisible();
  await page.reload();await page.getByRole('button',{name:'Chat humano',exact:true}).click();
- await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('Olá da participante humana');
+ await expect(page.getByRole('button',{name:'Tentar novamente',exact:true})).toBeVisible();
+ await expect(page.getByText('A mensagem “Olá da participante humana” não teve confirmação. A nova tentativa usa o mesmo identificador.')).toBeVisible();
  await page.getByRole('button',{name:'Tentar novamente',exact:true}).click();
  await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('');
  const transcript=await (await request.get(`/api/v1/${room.room_code}/transcript`)).json();expect(transcript.messages.filter((m:{content:string})=>m.content==='Olá da participante humana')).toHaveLength(1);
@@ -87,35 +93,69 @@ test('signed-in nonmember accepts an invitation fragment on the already-open roo
  await expect(page).toHaveURL(new RegExp(`/${room.room_code}$`));
 });
 
-test('pt-BR partials stay local, repeated final events deduplicate, final requires send',async({page,request})=>{
+test('pt-BR hands-free voice sends finals after silence, keeps typed draft separate and mutes late callbacks',async({page,request})=>{
  await page.addInitScript(()=>{
   class Recognition {
    lang='';continuous=false;interimResults=false;onstart:(()=>void)|null=null;onresult:((e:unknown)=>void)|null=null;onend:(()=>void)|null=null;onerror:((e:unknown)=>void)|null=null;
-   constructor(){(window as unknown as {qaSpeech:Recognition}).qaSpeech=this;}
+   constructor(){const target=window as unknown as {qaSpeech:Recognition,qaSpeechRuns:Recognition[]};target.qaSpeech=this;target.qaSpeechRuns??=[];target.qaSpeechRuns.push(this);}
    start(){this.onstart?.();}stop(){this.onend?.();}abort(){this.onend?.();}
   }
   (window as unknown as {SpeechRecognition:typeof Recognition}).SpeechRecognition=Recognition;
  });
  const room=await (await request.post('/api/v1/rooms',{data:{max_messages:10}})).json();await enter(page,room);
- await page.getByRole('button',{name:'Iniciar transcrição de voz'}).click();
- await page.evaluate(()=>{const speech=(window as unknown as {qaSpeech:{lang:string,onresult:(e:unknown)=>void}}).qaSpeech;if(speech.lang!=='pt-BR')throw Error('Wrong locale');speech.onresult({results:[Object.assign([{transcript:'fala parcial'}],{isFinal:false})]});});
- await expect(page.getByText('fala parcial',{exact:false})).toBeVisible();await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('');
+ const voiceRequests:{content:string,client_message_id:string,source:string}[]=[];let firstVoiceCommitted=false;
+ await page.route(`**/api/human/rooms/${room.room_code}/messages`,async route=>{
+  voiceRequests.push(JSON.parse(route.request().postData()??'{}'));
+  if(!firstVoiceCommitted){firstVoiceCommitted=true;await route.fetch();await route.abort('failed');}
+  else await route.continue();
+ });
+ await page.getByLabel('Sua mensagem',{exact:true}).fill('Rascunho digitado fica separado');
+ await page.getByRole('button',{name:'Ativar microfone',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Mutar microfone',exact:true})).toHaveAttribute('aria-pressed','true');
+ await expect(page.getByRole('status').filter({hasText:'Ouvindo'})).toBeVisible();
+ await page.evaluate(()=>{const speech=(window as unknown as {qaSpeech:{lang:string,continuous:boolean,interimResults:boolean}}).qaSpeech;if(speech.lang!=='pt-BR'||!speech.continuous||!speech.interimResults)throw Error('Wrong recognition configuration');});
+ await page.screenshot({path:path.join(artifacts,'human-chat-desktop-composer.png'),fullPage:true});
+ await page.evaluate(()=>{const speech=(window as unknown as {qaSpeech:{onresult:(e:unknown)=>void}}).qaSpeech;speech.onresult({results:[Object.assign([{transcript:'Bom dia'}],{isFinal:true})]});speech.onresult({results:[Object.assign([{transcript:'Bom dia'}],{isFinal:true})]});speech.onresult({results:[Object.assign([{transcript:'Bom dia'}],{isFinal:true}),Object.assign([{transcript:'Bom dia'}],{isFinal:true})]});});
+ await page.waitForTimeout(650);
+ await page.evaluate(()=>{const speech=(window as unknown as {qaSpeech:{onresult:(e:unknown)=>void}}).qaSpeech;speech.onresult({results:[Object.assign([{transcript:'Bom dia'}],{isFinal:true}),Object.assign([{transcript:'Bom dia'}],{isFinal:true}),Object.assign([{transcript:'continua falando'}],{isFinal:false})]});});
+ await expect(page.getByText('Prévia, ainda não enviada: continua falando',{exact:true})).toBeVisible();
+ await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('Rascunho digitado fica separado');
+ await page.waitForTimeout(700);
  expect((await (await request.get(`/api/v1/${room.room_code}/transcript`)).json()).messages).toHaveLength(0);
- await page.evaluate(()=>{const speech=(window as unknown as {qaSpeech:{onresult:(e:unknown)=>void}}).qaSpeech;const event={results:[Object.assign([{transcript:'Bom dia'}],{isFinal:true})]};speech.onresult(event);speech.onresult(event);speech.onresult({results:[...event.results,Object.assign([{transcript:'Bom dia'}],{isFinal:true})]});});
- await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('Bom dia Bom dia');
- await page.getByRole('button',{name:'Parar transcrição'}).click();
- await page.getByRole('button',{name:'Enviar',exact:true}).click();await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('');
- const transcript=await (await request.get(`/api/v1/${room.room_code}/transcript`)).json();expect(transcript.messages).toHaveLength(1);expect(transcript.messages[0].content).toBe('Bom dia Bom dia');
- await page.screenshot({path:path.join(artifacts,'voice-transcription-desktop.png'),fullPage:true});
+ await expect(page.getByRole('button',{name:'Tentar novamente',exact:true})).toBeVisible();
+ expect(voiceRequests).toHaveLength(1);expect(voiceRequests[0]).toMatchObject({content:'Bom dia Bom dia',source:'voice'});
+ const uncertainMessageId=voiceRequests[0].client_message_id;expect(uncertainMessageId).toMatch(/^[0-9a-f-]{36}$/i);
+ await page.waitForTimeout(1400);
+ expect(voiceRequests).toHaveLength(1);
+ expect((await (await request.get(`/api/v1/${room.room_code}/transcript`)).json()).messages).toHaveLength(1);
+ await page.getByRole('button',{name:'Tentar novamente',exact:true}).click();
+ await expect.poll(()=>voiceRequests.length,{timeout:5000}).toBe(2);
+ expect(voiceRequests[1].client_message_id).toBe(uncertainMessageId);
+ await expect.poll(async()=>{const transcript=await (await request.get(`/api/v1/${room.room_code}/transcript`)).json();return transcript.messages.length;},{timeout:5000}).toBe(1);
+ let transcript=await (await request.get(`/api/v1/${room.room_code}/transcript`)).json();expect(transcript.messages[0].content).toBe('Bom dia Bom dia');
+ await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('Rascunho digitado fica separado');
+ await expect.poll(()=>page.evaluate(()=>((window as unknown as {qaSpeechRuns:unknown[]}).qaSpeechRuns.length))).toBeGreaterThan(1);
+ const runningBeforeMute=await page.evaluate(()=>((window as unknown as {qaSpeechRuns:unknown[]}).qaSpeechRuns.length-1));
+ await page.getByRole('button',{name:'Mutar microfone',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Desmutar microfone',exact:true})).toHaveAttribute('aria-pressed','false');
+ await page.evaluate((index)=>{const run=(window as unknown as {qaSpeechRuns:{onresult:((e:unknown)=>void)|null}[]}).qaSpeechRuns[index];run.onresult?.({results:[Object.assign([{transcript:'fala tardia que não pode sair'}],{isFinal:true})]});},runningBeforeMute);
+ await page.waitForTimeout(1400);
+ transcript=await (await request.get(`/api/v1/${room.room_code}/transcript`)).json();expect(transcript.messages).toHaveLength(1);
+ await page.getByRole('button',{name:'Desmutar microfone',exact:true}).click();
+ await page.evaluate(()=>{const speech=(window as unknown as {qaSpeech:{onresult:(e:unknown)=>void}}).qaSpeech;speech.onresult({results:[Object.assign([{transcript:'Segunda fala'}],{isFinal:true})]});});
+ await expect.poll(async()=>{const latest=await (await request.get(`/api/v1/${room.room_code}/transcript`)).json();return latest.messages.length;},{timeout:5000}).toBe(2);
+ transcript=await (await request.get(`/api/v1/${room.room_code}/transcript`)).json();expect(transcript.messages[1].content).toBe('Segunda fala');
+ await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('Rascunho digitado fica separado');
 });
 
 test('mobile typed fallback, microphone denial and locked-room enforcement',async({page,request})=>{
  await page.setViewportSize({width:390,height:844});
  await page.addInitScript(()=>{class DeniedRecognition{onerror:((e:unknown)=>void)|null=null;onend:(()=>void)|null=null;start(){this.onerror?.({error:'not-allowed'});this.onend?.();}stop(){}abort(){}};(window as unknown as {SpeechRecognition:typeof DeniedRecognition}).SpeechRecognition=DeniedRecognition;});
  const room=await (await request.post('/api/v1/rooms',{data:{max_messages:10}})).json();await enter(page,room);
- await page.getByRole('button',{name:'Iniciar transcrição de voz'}).click();await expect(page.getByText(/A permissão do microfone foi negada/)).toBeVisible();
- await page.getByLabel('Sua mensagem',{exact:true}).fill('Mensagem digitada após recusa');await page.getByRole('button',{name:'Enviar',exact:true}).click();await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('');
- await page.screenshot({path:path.join(artifacts,'human-chat-mobile.png'),fullPage:true});
+ await page.getByRole('button',{name:'Ativar microfone'}).click();await expect(page.getByText(/A permissão do microfone foi negada/)).toBeVisible();
+ await page.getByLabel('Sua mensagem',{exact:true}).fill('Mensagem digitada após recusa');
+ await page.screenshot({path:path.join(artifacts,'human-chat-mobile-composer.png'),fullPage:true});
+ await page.getByRole('button',{name:'Enviar',exact:true}).click();await expect(page.getByLabel('Sua mensagem',{exact:true})).toHaveValue('');
  await request.post(`/api/v1/${room.room_code}/lock`,{data:{creator_token:room.creator_token}});
  await page.reload();await page.getByRole('button',{name:'Chat humano',exact:true}).click();await expect(page.getByLabel('Sua mensagem',{exact:true})).toBeDisabled();
 });

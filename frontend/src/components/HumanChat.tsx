@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { humanAuthSupabase } from "@/lib/supabase";
 import { useSpeech } from "@/hooks/useSpeech";
 import { getSpeechStatusMessage } from "@/lib/speech";
+import { getHumanAuthTransition } from "@/lib/human-auth-state";
 import { getHumanPendingStorageKey, parseHumanPendingMessage, type HumanPendingMessage } from "@/lib/human-pending";
 import {
   getHumanSession,
@@ -39,6 +40,9 @@ const controlStyle = {
 
 export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteDetected }: HumanChatProps) {
   const [authLoading, setAuthLoading] = useState(true);
+  const [membershipLoading, setMembershipLoading] = useState(true);
+  const [checkedRoomCode, setCheckedRoomCode] = useState<string | null>(null);
+  const [sessionRefresh, setSessionRefresh] = useState(0);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -51,7 +55,6 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
   const [pending, setPending] = useState<HumanPendingMessage | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [draftSource, setDraftSource] = useState<"chat" | "voice">("chat");
   const [pendingStorageWarning, setPendingStorageWarning] = useState(false);
   const [pendingStorageOwner, setPendingStorageOwner] = useState<string | null>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
@@ -61,22 +64,37 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
   const [inviteCopied, setInviteCopied] = useState(false);
   const previousUserId = useRef<string | null>(null);
   const inviteRoom = useRef(roomCode);
+  const authIdentityRef = useRef<{ userId: string | null; accessToken: string | null }>({ userId: null, accessToken: null });
+  const authEventVersionRef = useRef(0);
+  const sessionRequestVersionRef = useRef(0);
+  const sessionRef = useRef<HumanSession | null>(null);
+  const sessionRoomRef = useRef<string | null>(null);
+  const pendingRef = useRef<HumanPendingMessage | null>(null);
+  const busyRef = useRef(false);
+  const joinBusyRef = useRef(false);
+  const speechControlsRef = useRef<{ pause: () => void; resume: () => void }>({ pause: () => undefined, resume: () => undefined });
+  const sendVoiceRef = useRef<(content: string) => void>(() => undefined);
+
+  const updateSession = useCallback((nextSession: HumanSession | null) => {
+    sessionRef.current = nextSession;
+    sessionRoomRef.current = nextSession ? roomCode : null;
+    setSession(nextSession);
+  }, [roomCode]);
 
   const pendingStorageKey = userId
     ? getHumanPendingStorageKey(roomCode, userId)
     : null;
   const pendingStorageReady = pendingStorageKey !== null && pendingStorageOwner === pendingStorageKey;
   const currentPending = pendingStorageReady ? pending : null;
+  const roomSession = sessionRoomRef.current === roomCode ? session : null;
 
-  const appendVoiceText = (text: string) => {
-    setDraft((current) => current.trim() ? `${current.trimEnd()} ${text}` : text);
-    setDraftSource("voice");
-  };
-  const { abort: abortSpeech, ...speech } = useSpeech({
+  const speech = useSpeech({
     roomCode,
-    enabled: Boolean(accessToken && session && !isLocked && !currentPending && !busy),
-    onFinalText: appendVoiceText,
+    enabled: Boolean(accessToken && roomSession && !isLocked),
+    onFinalText: (content) => sendVoiceRef.current(content),
   });
+  const abortSpeech = speech.abort;
+  speechControlsRef.current = { pause: speech.pause, resume: speech.resume };
 
   useEffect(() => {
     if (inviteRoom.current !== roomCode) {
@@ -106,8 +124,11 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
     setPendingStorageWarning(false);
     setPendingStorageOwner(null);
     try {
-      setPending(parseHumanPendingMessage(sessionStorage.getItem(pendingStorageKey)));
+      const restored = parseHumanPendingMessage(sessionStorage.getItem(pendingStorageKey));
+      pendingRef.current = restored;
+      setPending(restored);
     } catch {
+      pendingRef.current = null;
       setPending(null);
     }
     setPendingStorageOwner(pendingStorageKey);
@@ -130,8 +151,17 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
     const previousId = previousUserId.current;
     previousUserId.current = userId;
     setDraft("");
-    setDraftSource("chat");
     setDisplayName("");
+    if (previousId && previousId !== userId) {
+      // The room/user-scoped storage loader owns the new identity's retry.
+      // Clearing here races that loader on direct account switches (A -> B)
+      // and can delete B's unconfirmed message. Signing out still clears the
+      // in-memory copy; the old account's storage remains scoped to that user.
+      if (!userId) {
+        pendingRef.current = null;
+        setPending(null);
+      }
+    }
     // A fragment invitation must survive the expected anonymous-to-signed-in
     // transition. Clear it only when an already authenticated account changes.
     if (previousId && previousId !== userId) setInvitationToken("");
@@ -141,71 +171,111 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
 
   useEffect(() => {
     let active = true;
+    const initialEventVersion = authEventVersionRef.current;
     void humanAuthSupabase.auth.getSession()
       .then(({ data }) => {
-        if (active) {
-          setAccessToken(data.session?.access_token ?? null);
-          setUserId(data.session?.user.id ?? null);
-          setAuthLoading(false);
-        }
+        if (!active || authEventVersionRef.current !== initialEventVersion) return;
+        const nextAccessToken = data.session?.access_token ?? null;
+        const nextUserId = data.session?.user.id ?? null;
+        authIdentityRef.current = { accessToken: nextAccessToken, userId: nextUserId };
+        setAccessToken(nextAccessToken);
+        setUserId(nextUserId);
+        setMembershipLoading(Boolean(nextAccessToken));
+        setAuthLoading(false);
       })
       .catch(() => {
-        if (active) {
-          setAccessToken(null);
-          setUserId(null);
-          setAuthLoading(false);
-          setError("Não foi possível recuperar sua sessão. Entre novamente para continuar.");
-        }
+        if (!active || authEventVersionRef.current !== initialEventVersion) return;
+        authIdentityRef.current = { accessToken: null, userId: null };
+        setAccessToken(null);
+        setUserId(null);
+        setMembershipLoading(false);
+        setAuthLoading(false);
+        setError("Não foi possível recuperar sua sessão. Entre novamente para continuar.");
       });
 
     const { data } = humanAuthSupabase.auth.onAuthStateChange((event, authSession) => {
-      setAccessToken(authSession?.access_token ?? null);
-      setUserId(authSession?.user.id ?? null);
+      authEventVersionRef.current += 1;
+      const previousUserId = authIdentityRef.current.userId;
+      const nextAccessToken = authSession?.access_token ?? null;
+      const nextUserId = authSession?.user.id ?? null;
+      const transition = getHumanAuthTransition(event, previousUserId, nextUserId);
+      authIdentityRef.current = { accessToken: nextAccessToken, userId: nextUserId };
+      setAccessToken(nextAccessToken);
+      setUserId(nextUserId);
       setAuthLoading(false);
-      if (!authSession || event === "SIGNED_IN") {
+      if (transition === "signed-out" || transition === "identity-changed") {
+        sessionRequestVersionRef.current += 1;
         abortSpeech();
-        setSession(null);
+        updateSession(null);
         setParticipants([]);
+        setMembershipLoading(Boolean(nextAccessToken));
+      } else if (transition === "refresh") {
+        if (joinBusyRef.current) return;
+        sessionRequestVersionRef.current += 1;
+        setMembershipLoading(!sessionRef.current || sessionRoomRef.current !== roomCode);
+        setSessionRefresh((current) => current + 1);
       }
     });
 
+    const refreshOnFocus = () => {
+      const identity = authIdentityRef.current;
+      if (!identity.accessToken || !identity.userId || joinBusyRef.current) return;
+      sessionRequestVersionRef.current += 1;
+      setMembershipLoading(!sessionRef.current);
+      setSessionRefresh((current) => current + 1);
+    };
+    window.addEventListener("focus", refreshOnFocus);
+
     return () => {
       active = false;
+      sessionRequestVersionRef.current += 1;
+      window.removeEventListener("focus", refreshOnFocus);
       data.subscription.unsubscribe();
     };
-  }, [abortSpeech]);
+  }, [abortSpeech, roomCode, updateSession]);
 
   useEffect(() => {
-    if (!accessToken) {
-      setSession(null);
+    if (!accessToken || !userId) {
+      updateSession(null);
       setParticipants([]);
+      setCheckedRoomCode(null);
+      setMembershipLoading(false);
       return;
     }
+    if (joinBusyRef.current) return;
     let active = true;
+    const requestVersion = ++sessionRequestVersionRef.current;
+    setCheckedRoomCode(roomCode);
+    if (!sessionRef.current || sessionRoomRef.current !== roomCode) setMembershipLoading(true);
     setError(null);
     void getHumanSession(roomCode, accessToken)
       .then((result) => {
-        if (active) {
-          setSession(result);
+        if (active && requestVersion === sessionRequestVersionRef.current) {
+          updateSession(result);
           setDisplayName(result.display_name);
         }
       })
       .catch((cause: unknown) => {
-        if (active) {
+        if (active && requestVersion === sessionRequestVersionRef.current) {
           if (isHumanSessionDenied(cause)) abortSpeech();
-          setSession(null);
+          if (!sessionRef.current || sessionRoomRef.current !== roomCode || isHumanSessionDenied(cause) || (cause instanceof HumanApiError && cause.code === "session_not_found")) {
+            updateSession(null);
+          }
           if (!(cause instanceof HumanApiError && cause.code === "session_not_found")) {
             setError(errorText(cause, "Não foi possível verificar sua participação nesta sala."));
           }
         }
+      })
+      .finally(() => {
+        if (active && requestVersion === sessionRequestVersionRef.current) setMembershipLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [roomCode, accessToken, abortSpeech]);
+  }, [roomCode, accessToken, userId, sessionRefresh, abortSpeech, updateSession]);
 
   useEffect(() => {
-    if (!accessToken || !session) return;
+    if (!accessToken || !roomSession) return;
     let active = true;
     const refreshPresence = async () => {
       try {
@@ -215,11 +285,12 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
         if (!active) return;
         if (isHumanSessionDenied(cause)) {
           abortSpeech();
-          setSession(null);
+          updateSession(null);
           setParticipants([]);
           setError("Sua sessão da sala expirou. Entre novamente para continuar.");
           return;
         }
+        // A transient presence read failure does not revoke a valid session.
         setError("Não foi possível atualizar a presença dos participantes.");
       }
     };
@@ -231,7 +302,7 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
         if (!active) return;
         if (isHumanSessionDenied(cause)) {
           abortSpeech();
-          setSession(null);
+        updateSession(null);
           setParticipants([]);
           setError("Sua sessão da sala expirou. Entre novamente para continuar.");
           return;
@@ -245,10 +316,11 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
       active = false;
       window.clearInterval(interval);
     };
-  }, [accessToken, roomCode, session, abortSpeech]);
+  }, [accessToken, roomCode, roomSession, abortSpeech, updateSession]);
 
   async function handleSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -258,6 +330,7 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
     } catch (cause) {
       setError(errorText(cause, "Não foi possível entrar. Confira seu e-mail e senha."));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -265,6 +338,10 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
   async function handleJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!accessToken) return;
+    const requestVersion = ++sessionRequestVersionRef.current;
+    joinBusyRef.current = true;
+    busyRef.current = true;
+    setMembershipLoading(true);
     setBusy(true);
     setError(null);
     try {
@@ -274,12 +351,19 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
         displayName.trim(),
         creatorToken || invitationToken.trim() || undefined
       );
-      setSession(result);
-      setDisplayName(result.display_name);
-      setInvitationToken("");
+      if (requestVersion === sessionRequestVersionRef.current) {
+        updateSession(result);
+        setDisplayName(result.display_name);
+        setInvitationToken("");
+      }
     } catch (cause) {
-      setError(errorText(cause, "Não foi possível entrar nesta sala. Verifique o convite e tente novamente."));
+      if (requestVersion === sessionRequestVersionRef.current) {
+        setError(errorText(cause, "Não foi possível entrar nesta sala. Verifique o convite e tente novamente."));
+      }
     } finally {
+      busyRef.current = false;
+      joinBusyRef.current = false;
+      if (requestVersion === sessionRequestVersionRef.current) setMembershipLoading(false);
       setBusy(false);
     }
   }
@@ -312,58 +396,93 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
     }
   }
 
-  async function handleSend(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!accessToken || !session || isLocked || busy || !pendingStorageReady) return;
-    // Invalidate recognition callbacks synchronously before freezing the draft
-    // into a retryable request. Late browser events cannot change this payload.
-    abortSpeech();
-    const message = currentPending ?? {
-      content: draft.trim(),
-      clientMessageId: crypto.randomUUID(),
-      source: draftSource,
-    };
-    if (!message.content) return;
+  async function dispatchHumanMessage(message: HumanPendingMessage, clearManualDraft: boolean) {
+    if (!accessToken || !sessionRef.current || isLocked || busyRef.current || !pendingStorageReady || !pendingStorageKey) return false;
+    if (!message.content.trim()) return false;
 
+    if (message.source === "chat") speechControlsRef.current.pause();
+    busyRef.current = true;
+    pendingRef.current = message;
     setPending(message);
     setPendingStorageOwner(pendingStorageKey);
+    try {
+      // Persist the id and exact body before the request can become uncertain.
+      sessionStorage.setItem(pendingStorageKey, JSON.stringify(message));
+      setPendingStorageWarning(false);
+    } catch {
+      setPendingStorageWarning(true);
+    }
     setBusy(true);
     setError(null);
+    const sendingUserId = userId;
     try {
       await sendHumanMessage(roomCode, accessToken, message.content, message.clientMessageId, message.source);
-      setDraft("");
-      setDraftSource("chat");
+      if (authIdentityRef.current.userId !== sendingUserId || pendingRef.current?.clientMessageId !== message.clientMessageId) return false;
+      pendingRef.current = null;
       setPending(null);
+      try {
+        sessionStorage.removeItem(pendingStorageKey);
+      } catch {
+        setPendingStorageWarning(true);
+      }
+      if (clearManualDraft && message.source === "chat") setDraft("");
+      speechControlsRef.current.resume();
+      return true;
     } catch (cause) {
-      // Retain the original id and body. Retrying after an uncertain network
-      // result is safe because the API deduplicates client_message_id.
-      setError(errorText(cause, "A mensagem pode não ter sido confirmada. Tente novamente."));
+      // Keep the same payload and UUID for an explicit, idempotent retry.
+      if (authIdentityRef.current.userId === sendingUserId && pendingRef.current?.clientMessageId === message.clientMessageId) {
+        setError(errorText(cause, "A mensagem pode não ter sido confirmada. Tente novamente."));
+        if (isHumanSessionDenied(cause)) {
+          abortSpeech();
+          updateSession(null);
+          setParticipants([]);
+        }
+      }
+      return false;
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
+  async function handleSend(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busyRef.current) return;
+    const message = currentPending ?? {
+      content: draft.trim(),
+      clientMessageId: crypto.randomUUID(),
+      source: "chat" as const,
+    };
+    await dispatchHumanMessage(message, true);
+  }
+
+  sendVoiceRef.current = (content) => {
+    if (!content.trim() || busyRef.current || pendingRef.current) return;
+    void dispatchHumanMessage({ content: content.trim(), clientMessageId: crypto.randomUUID(), source: "voice" }, false);
+  };
+
   async function handleLeave() {
     if (!accessToken) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
       const [leaveResult, signOutResult] = await Promise.allSettled([
-        session ? leaveHumanSession(roomCode, accessToken) : Promise.resolve(),
+      roomSession ? leaveHumanSession(roomCode, accessToken) : Promise.resolve(),
         humanAuthSupabase.auth.signOut(),
       ]);
       if (signOutResult.status === "rejected") throw signOutResult.reason;
       if (signOutResult.value.error) throw signOutResult.value.error;
-      setSession(null);
+      updateSession(null);
       setParticipants([]);
       setDraft("");
-      setDraftSource("chat");
       if (leaveResult.status === "rejected") {
         setError("Sua conta foi desconectada, mas a saída da sala não foi confirmada pelo servidor.");
       }
     } catch (cause) {
       setError(errorText(cause, "Não foi possível sair da sala."));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -376,6 +495,9 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
     color: "var(--room-text)",
     background: "var(--room-surface)",
   };
+  const microphoneLabel = speech.handsfree
+    ? "Mutar microfone"
+    : speech.status === "muted" ? "Desmutar microfone" : "Ativar microfone";
 
   return (
     <section aria-label="Chat de participantes" style={frameStyle}>
@@ -385,7 +507,7 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
           <p style={{ margin: "3px 0 0", color: "var(--room-text-muted)", fontSize: 12 }}>Mensagens compartilhadas com a sala</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {session && <span style={{ color: "var(--room-text-muted)", fontSize: 11 }}>{session.display_name}</span>}
+          {roomSession && <span style={{ color: "var(--room-text-muted)", fontSize: 11 }}>{roomSession.display_name}</span>}
           {onClose && <button type="button" onClick={onClose} aria-label="Fechar chat" style={iconButtonStyle}>×</button>}
         </div>
       </header>
@@ -424,7 +546,9 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
           </label>
           <button type="submit" disabled={busy} style={primaryButtonStyle}>{busy ? "Entrando…" : "Entrar"}</button>
         </form>
-      ) : !session ? (
+      ) : !roomSession && (membershipLoading || checkedRoomCode !== roomCode) ? (
+        <p role="status" style={{ padding: 16, color: "var(--room-text-secondary)", fontSize: 13 }}>Verificando sua participação na sala…</p>
+      ) : !roomSession ? (
         <form onSubmit={handleJoin} style={{ display: "flex", flexDirection: "column", gap: 10, padding: 16 }}>
           <p style={{ margin: "0 0 2px", color: "var(--room-text-secondary)", fontSize: 13 }}>Escolha seu nome e informe o convite para participar.</p>
           <label style={labelStyle}>Nome para exibição
@@ -454,20 +578,39 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
           </div>
           <form onSubmit={handleSend} style={{ padding: 12, borderTop: "1px solid var(--room-border)", flexShrink: 0 }}>
             <label htmlFor="human-message" style={labelStyle}>Sua mensagem</label>
-            <textarea id="human-message" value={currentPending?.content ?? draft} onChange={(event) => { setDraft(event.target.value); if (draftSource !== "voice") setDraftSource("chat"); }} disabled={Boolean(currentPending) || busy || isLocked || !pendingStorageReady} maxLength={4000} rows={3} style={{ ...controlStyle, resize: "vertical", marginTop: 6, fontFamily: "inherit" }} placeholder={isLocked ? "A sala foi encerrada" : "Escreva ou dite uma mensagem…"} />
-            {speech.preview && <p aria-live="polite" style={{ margin: "7px 0 0", color: "var(--room-text-secondary)", fontSize: 12 }}><span style={{ color: "var(--room-text-muted)" }}>Prévia: </span>{speech.preview}</p>}
-            {speech.status !== "idle" && <p role="status" aria-live="polite" style={{ margin: "7px 0 0", color: speech.status === "permission-denied" || speech.status === "error" || speech.status === "network" || speech.status === "no-speech" ? "#ffb4ab" : "var(--room-text-secondary)", fontSize: 11 }}>{getSpeechStatusMessage(speech.status)}</p>}
-            <p style={{ margin: "7px 0 0", color: "var(--room-text-muted)", fontSize: 10 }}>O áudio não será salvo. O navegador pode enviar a fala a um serviço externo de reconhecimento.</p>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
-              <button type="button" onClick={() => void handleLeave()} disabled={busy} style={quietButtonStyle}>{busy ? "Aguarde…" : "Sair"}</button>
-              <button type="button" onClick={speech.capturing ? speech.stop : speech.start} disabled={Boolean(currentPending) || busy || isLocked || speech.status === "stopping"} aria-label={speech.capturing ? "Parar transcrição" : "Iniciar transcrição de voz"} style={quietButtonStyle}>
-                {speech.capturing ? (speech.status === "stopping" ? "Finalizando…" : "Parar voz") : "Falar"}
-              </button>
-              <button type="submit" disabled={busy || isLocked || !pendingStorageReady || speech.capturing || !(currentPending?.content ?? draft).trim()} style={primaryButtonStyle}>
-                {currentPending ? (busy ? "Enviando…" : "Tentar novamente") : busy ? "Enviando…" : "Enviar"}
-              </button>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, marginTop: 6 }}>
+              <textarea id="human-message" name="message" value={draft} onChange={(event) => setDraft(event.target.value)} disabled={Boolean(currentPending) || busy || isLocked || !pendingStorageReady} maxLength={4000} rows={3} style={{ ...controlStyle, flex: 1, minWidth: 0, resize: "vertical", fontFamily: "inherit" }} placeholder={isLocked ? "A sala foi encerrada" : "Escreva sua mensagem…"} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={speech.handsfree ? speech.mute : speech.start}
+                  disabled={isLocked || !pendingStorageReady || (!speech.handsfree && (busy || Boolean(currentPending)))}
+                  aria-pressed={speech.handsfree}
+                  aria-label={microphoneLabel}
+                  title={microphoneLabel}
+                  style={{ ...quietButtonStyle, width: 44, height: 44, minWidth: 44, padding: 0, display: "grid", placeItems: "center", background: speech.handsfree ? "rgba(60, 179, 113, .16)" : "transparent", borderColor: speech.handsfree ? "var(--room-green)" : "var(--room-border)", color: speech.handsfree ? "var(--room-green)" : "var(--room-text-secondary)" }}
+                >
+                  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="2" width="6" height="12" rx="3" />
+                    <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8" />
+                    {!speech.handsfree && <path d="m4 4 16 16" />}
+                  </svg>
+                </button>
+                <button type="submit" disabled={busy || isLocked || !pendingStorageReady || (!currentPending && !draft.trim())} style={{ ...primaryButtonStyle, minWidth: 72, paddingInline: 10 }}>
+                  {currentPending ? (busy ? "Enviando…" : "Tentar novamente") : busy ? "Enviando…" : "Enviar"}
+                </button>
+              </div>
             </div>
-            {currentPending && <p role="status" style={{ margin: "7px 0 0", color: "var(--room-text-muted)", fontSize: 11 }}>A mensagem permanece salva para nova tentativa com o mesmo identificador.</p>}
+            <p role="status" aria-live="polite" style={{ margin: "7px 0 0", color: speech.status === "permission-denied" || speech.status === "error" || speech.status === "network" || speech.status === "no-speech" ? "#ffb4ab" : "var(--room-text-secondary)", fontSize: 11 }}>
+              {busy ? "Enviando" : currentPending && speech.handsfree ? "Envio pendente · microfone pausado" : speech.handsfree ? "Ouvindo" : "Microfone mutado"}
+              {speech.status !== "idle" && speech.status !== "listening" ? ` · ${getSpeechStatusMessage(speech.status)}` : ""}
+            </p>
+            {speech.preview && <p aria-live="polite" style={{ margin: "6px 0 0", color: "var(--room-text-muted)", fontSize: 11 }}><span>Prévia, ainda não enviada: </span>{speech.preview}</p>}
+            <p style={{ margin: "5px 0 0", color: "var(--room-text-muted)", fontSize: 10 }}>O áudio não será salvo. O navegador pode enviar a fala a um serviço externo de reconhecimento.</p>
+            {currentPending && <p role="status" style={{ margin: "7px 0 0", color: "var(--room-text-muted)", fontSize: 11, overflowWrap: "anywhere" }}>A mensagem “{currentPending.content}” não teve confirmação. A nova tentativa usa o mesmo identificador.</p>}
+            <div style={{ display: "flex", justifyContent: "flex-start", marginTop: 7 }}>
+              <button type="button" onClick={() => void handleLeave()} disabled={busy} style={quietButtonStyle}>{busy ? "Aguarde…" : "Sair"}</button>
+            </div>
             {pendingStorageWarning && <p role="alert" style={{ margin: "7px 0 0", color: "#ffb4ab", fontSize: 11 }}>O navegador não conseguiu guardar a nova tentativa. Mantenha este painel aberto até a confirmação.</p>}
           </form>
         </>
