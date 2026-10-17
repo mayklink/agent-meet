@@ -83,8 +83,9 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
       inviteRoom.current = roomCode;
       setInvitationToken("");
     }
-    const inviteMatch = window.location.hash.match(/^#human_invite=([0-9a-f]{64})$/);
-    if (inviteMatch) {
+    const readInvitationFragment = () => {
+      const inviteMatch = window.location.hash.match(/^#human_invite=([0-9a-f]{64})$/);
+      if (!inviteMatch) return;
       setInvitationToken(inviteMatch[1]);
       onInviteDetected?.();
       window.history.replaceState(
@@ -92,7 +93,10 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteD
         "",
         `${window.location.pathname}${window.location.search}`
       );
-    }
+    };
+    readInvitationFragment();
+    window.addEventListener("hashchange", readInvitationFragment);
+    return () => window.removeEventListener("hashchange", readInvitationFragment);
   }, [onInviteDetected, roomCode]);
 
   useEffect(() => {

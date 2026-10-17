@@ -71,6 +71,22 @@ test('human invitation fragment survives login, joins only its room and is remov
  expect(await page.evaluate(()=>sessionStorage.getItem(`creator_token:${location.pathname.slice(1)}`))).toBeNull();
 });
 
+test('signed-in nonmember accepts an invitation fragment on the already-open room',async({page,request})=>{
+ const room=await (await request.post('/api/v1/rooms',{data:{max_messages:10}})).json();
+ await page.goto('/'+room.room_code);await page.getByRole('button',{name:'Chat humano',exact:true}).click();
+ await page.getByLabel('E-mail',{exact:true}).fill('human@example.test');await page.getByLabel('Senha',{exact:true}).fill('test-password-only');
+ await page.getByRole('button',{name:'Entrar',exact:true}).click();
+ await expect(page.getByText('Escolha seu nome e informe o convite para participar.')).toBeVisible();
+ const authResponse=await request.post('http://127.0.0.1:54329/auth/v1/token?grant_type=password',{headers:{apikey:'local-e2e-anon-key'},data:{email:'human@example.test',password:'test-password-only'}});
+ expect(authResponse.ok()).toBeTruthy();const auth=await authResponse.json();
+ const inviteResponse=await request.post(`/api/human/rooms/${room.room_code}/invite`,{headers:{Authorization:`Bearer ${auth.access_token}`},data:{creator_token:room.creator_token}});
+ expect(inviteResponse.status()).toBe(201);const invite=await inviteResponse.json();
+ await page.evaluate(token=>{window.location.hash=`human_invite=${token}`;},invite.invite_token);
+ await expect(page.getByLabel('Token de convite')).toHaveValue(invite.invite_token);
+ await expect(page.getByRole('region',{name:'Chat de participantes'})).toBeVisible();
+ await expect(page).toHaveURL(new RegExp(`/${room.room_code}$`));
+});
+
 test('pt-BR partials stay local, repeated final events deduplicate, final requires send',async({page,request})=>{
  await page.addInitScript(()=>{
   class Recognition {
