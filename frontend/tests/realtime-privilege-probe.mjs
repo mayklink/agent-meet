@@ -1,0 +1,10 @@
+import {createClient} from '@supabase/supabase-js';
+const client=createClient(process.env.NEXT_PUBLIC_SUPABASE_URL,process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
+const events=[];let finish;
+const done=new Promise(resolve=>{finish=resolve;});
+const channel=client.channel('credential-privilege-verification');
+for(const table of ['rooms','agents'])channel.on('postgres_changes',{event:'INSERT',schema:'public',table,filter:'room_code=eq.qa0-rrrr-rrrr'},payload=>{events.push({table,fields:Object.keys(payload.new),secretExposed:'creator_token' in payload.new || 'agent_token' in payload.new});if(events.length===2)finish();});
+const timer=setTimeout(finish,25000);
+channel.subscribe(state=>{if(state==='SUBSCRIBED')console.log('PRIVILEGE_PROBE_SUBSCRIBED');});
+await done;clearTimeout(timer);await client.removeChannel(channel);
+const passed=events.length===2&&events.every(e=>!e.secretExposed);console.log(JSON.stringify({passed,events}));if(!passed)process.exitCode=1;
