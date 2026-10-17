@@ -12,11 +12,13 @@ export interface HumanInvite {
 
 export class HumanApiError extends Error {
   readonly status: number;
+  readonly code: string | null;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code: string | null = null) {
     super(message);
     this.name = "HumanApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -48,13 +50,15 @@ async function request<T>(
 
   if (!response.ok) {
     let message = `Não foi possível concluir a solicitação (${response.status}).`;
+    let code: string | null = null;
     try {
       const body = (await response.json()) as { error?: string; message?: string };
       message = body.message ?? body.error ?? message;
+      code = body.error ?? null;
     } catch {
       // Keep the status-based message if the response has no JSON body.
     }
-    throw new HumanApiError(message, response.status);
+    throw new HumanApiError(message, response.status, code);
   }
 
   if (response.status === 204) return undefined as T;

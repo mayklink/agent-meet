@@ -23,6 +23,7 @@ interface HumanChatProps {
   creatorToken?: string | null;
   isLocked: boolean;
   onClose?: () => void;
+  onInviteDetected?: () => void;
 }
 
 const controlStyle = {
@@ -36,7 +37,7 @@ const controlStyle = {
   fontSize: 14,
 };
 
-export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanChatProps) {
+export function HumanChat({ roomCode, creatorToken, isLocked, onClose, onInviteDetected }: HumanChatProps) {
   const [authLoading, setAuthLoading] = useState(true);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -59,6 +60,7 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
   const previousUserId = useRef<string | null>(null);
+  const inviteRoom = useRef(roomCode);
 
   const pendingStorageKey = userId
     ? getHumanPendingStorageKey(roomCode, userId)
@@ -75,6 +77,23 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
     enabled: Boolean(accessToken && session && !isLocked && !currentPending && !busy),
     onFinalText: appendVoiceText,
   });
+
+  useEffect(() => {
+    if (inviteRoom.current !== roomCode) {
+      inviteRoom.current = roomCode;
+      setInvitationToken("");
+    }
+    const inviteMatch = window.location.hash.match(/^#human_invite=([0-9a-f]{64})$/);
+    if (inviteMatch) {
+      setInvitationToken(inviteMatch[1]);
+      onInviteDetected?.();
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${window.location.search}`
+      );
+    }
+  }, [onInviteDetected, roomCode]);
 
   useEffect(() => {
     if (!pendingStorageKey) {
@@ -104,11 +123,14 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
 
   useEffect(() => {
     if (previousUserId.current === userId) return;
+    const previousId = previousUserId.current;
     previousUserId.current = userId;
     setDraft("");
     setDraftSource("chat");
     setDisplayName("");
-    setInvitationToken("");
+    // A fragment invitation must survive the expected anonymous-to-signed-in
+    // transition. Clear it only when an already authenticated account changes.
+    if (previousId && previousId !== userId) setInvitationToken("");
     setInviteToken(null);
     setInviteExpiresAt(null);
   }, [userId]);
@@ -168,8 +190,8 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
         if (active) {
           if (isHumanSessionDenied(cause)) abortSpeech();
           setSession(null);
-          if (cause instanceof HumanApiError && cause.status === 403) {
-            setError("Sua sessão não está mais autorizada nesta sala. Entre novamente com um convite válido.");
+          if (!(cause instanceof HumanApiError && cause.code === "session_not_found")) {
+            setError(errorText(cause, "Não foi possível verificar sua participação nesta sala."));
           }
         }
       });
@@ -400,13 +422,13 @@ export function HumanChat({ roomCode, creatorToken, isLocked, onClose }: HumanCh
         </form>
       ) : !session ? (
         <form onSubmit={handleJoin} style={{ display: "flex", flexDirection: "column", gap: 10, padding: 16 }}>
-          <p style={{ margin: "0 0 2px", color: "var(--room-text-secondary)", fontSize: 13 }}>Escolha como seu nome aparecerá na sala.</p>
+          <p style={{ margin: "0 0 2px", color: "var(--room-text-secondary)", fontSize: 13 }}>Escolha seu nome e informe o convite para participar.</p>
           <label style={labelStyle}>Nome para exibição
             <input autoComplete="nickname" required maxLength={60} value={displayName} onChange={(event) => setDisplayName(event.target.value)} style={controlStyle} />
           </label>
           {!creatorToken && <label style={labelStyle}>Token de convite
             <input autoComplete="off" type="password" value={invitationToken} onChange={(event) => setInvitationToken(event.target.value)} style={controlStyle} aria-describedby="human-invite-help" />
-            <span id="human-invite-help" style={{ color: "var(--room-text-muted)", fontSize: 11 }}>Use o token compartilhado pelo criador da sala.</span>
+            <span id="human-invite-help" style={{ color: "var(--room-text-muted)", fontSize: 11 }}>Cole o convite humano compartilhado para esta sala.</span>
           </label>}
           <button type="submit" disabled={busy || !displayName.trim() || isLocked} style={primaryButtonStyle}>{isLocked ? "Sala encerrada" : busy ? "Entrando…" : "Participar"}</button>
           <button type="button" onClick={() => void handleLeave()} disabled={busy} style={quietButtonStyle}>{busy ? "Aguarde…" : "Sair da conta"}</button>

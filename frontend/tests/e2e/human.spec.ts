@@ -39,6 +39,38 @@ test('human login, persisted chat, reload and uncertain-network retry',async({pa
  await page.screenshot({path:path.join(artifacts,'human-chat-desktop.png'),fullPage:true});
 });
 
+test('first login shows the neutral join form when this account has no room session',async({page,request})=>{
+ const room=await (await request.post('/api/v1/rooms',{data:{max_messages:10}})).json();
+ await page.goto('/'+room.room_code);await page.getByRole('button',{name:'Chat humano',exact:true}).click();
+ await page.getByLabel('E-mail',{exact:true}).fill('human@example.test');await page.getByLabel('Senha',{exact:true}).fill('test-password-only');
+ await page.getByRole('button',{name:'Entrar',exact:true}).click();
+ await expect(page.getByText('Escolha seu nome e informe o convite para participar.')).toBeVisible();
+ await expect(page.getByRole('region',{name:'Chat de participantes'}).getByRole('alert')).toHaveCount(0);
+ await expect(page.getByLabel('Token de convite')).toBeVisible();
+ await expect(page.getByRole('button',{name:'Participar',exact:true})).toBeDisabled();
+});
+
+test('human invitation fragment survives login, joins only its room and is removed from the URL',async({page,request})=>{
+ await page.setViewportSize({width:390,height:844});
+ const room=await (await request.post('/api/v1/rooms',{data:{max_messages:10}})).json();
+ const authResponse=await request.post('http://127.0.0.1:54329/auth/v1/token?grant_type=password',{headers:{apikey:'local-e2e-anon-key'},data:{email:'human@example.test',password:'test-password-only'}});
+ expect(authResponse.ok()).toBeTruthy();const auth=await authResponse.json();
+ const inviteResponse=await request.post(`/api/human/rooms/${room.room_code}/invite`,{headers:{Authorization:`Bearer ${auth.access_token}`},data:{creator_token:room.creator_token}});
+ expect(inviteResponse.status()).toBe(201);const invite=await inviteResponse.json();
+ await page.goto(`/${room.room_code}?source=invite#human_invite=${invite.invite_token}`);
+ await expect(page.getByLabel('E-mail',{exact:true})).toBeVisible();
+ await page.getByLabel('E-mail',{exact:true}).fill('human@example.test');await page.getByLabel('Senha',{exact:true}).fill('test-password-only');
+ await page.getByRole('button',{name:'Entrar',exact:true}).click();
+ await expect(page.getByLabel('Token de convite')).toHaveValue(invite.invite_token);
+ await expect(page.getByText('Escolha seu nome e informe o convite para participar.')).toBeVisible();
+ await expect(page.getByRole('region',{name:'Chat de participantes'}).getByRole('alert')).toHaveCount(0);
+ await expect(page).toHaveURL(new RegExp(`/${room.room_code}\\?source=invite$`));
+ await page.getByLabel('Nome para exibição').fill('Convidada QA');
+ await page.getByRole('button',{name:'Participar',exact:true}).click();
+ await expect(page.getByLabel('Sua mensagem',{exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>sessionStorage.getItem(`creator_token:${location.pathname.slice(1)}`))).toBeNull();
+});
+
 test('pt-BR partials stay local, repeated final events deduplicate, final requires send',async({page,request})=>{
  await page.addInitScript(()=>{
   class Recognition {

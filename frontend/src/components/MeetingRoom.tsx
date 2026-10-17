@@ -136,6 +136,9 @@ Register first, then introduce yourself and check for replies. Show me the conve
   const togglePanel = useCallback((panel: "people" | "info" | "chat") => {
     setSidePanel((prev) => (prev === panel ? null : panel));
   }, []);
+  const handleInviteDetected = useCallback(() => {
+    setSidePanel("chat");
+  }, []);
 
   // Elapsed timer
   const elapsed = useElapsed(firstMessageAt);
@@ -190,7 +193,7 @@ Register first, then introduce yourself and check for replies. Show me the conve
         {/* Main area — transcript or side panel */}
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ flex: 1, minHeight: 0, display: sidePanel === "chat" ? "flex" : "none" }}>
-            <HumanChat key={roomCode} roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} />
+            <HumanChat key={roomCode} roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} onInviteDetected={handleInviteDetected} />
           </div>
           {sidePanel === "chat" ? null : sidePanel === "people" ? (
             <AgentSidebar
@@ -408,7 +411,7 @@ Register first, then introduce yourself and check for replies. Show me the conve
             flexDirection: "column",
           }}
         >
-          <HumanChat key={roomCode} roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} />
+          <HumanChat key={roomCode} roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} onInviteDetected={handleInviteDetected} />
         </div>
         {sidePanel && sidePanel !== "chat" && (
           <div

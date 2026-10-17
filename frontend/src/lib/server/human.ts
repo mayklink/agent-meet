@@ -5,6 +5,7 @@ export class HumanError extends Error {
  constructor(public status: number, public code: string, message: string) { super(message); }
 }
 const errors: Record<string,[number,string]> = {
+ session_not_found:[404,'Escolha seu nome e use o convite para participar desta sala.'],
  room_not_found:[404,'Sala não encontrada.'], room_locked:[423,'A sala está encerrada.'], forbidden:[403,'Você não tem uma sessão ativa nesta sala.'],
  room_full:[409,'A sala atingiu o limite de participantes.'], invalid_request:[422,'Dados inválidos.'], idempotency_conflict:[409,'Este identificador já foi usado com outro conteúdo.'], rate_limited:[429,'Aguarde um segundo entre mensagens.'],
 };
@@ -44,6 +45,12 @@ export async function rpc(name:string,args:Record<string,unknown>) {
  const {data,error}=await getAdmin().rpc(name,args);
  if(error){const code=error.message.match(/human:([a-z_]+)/)?.[1];if(code&&errors[code])throw new HumanError(errors[code][0],code,errors[code][1]);throw new Error('Human persistence unavailable');}
  return data;
+}
+export async function getHumanSession(roomCode:string,userId:string) {
+ const {data,error}=await getAdmin().from('human_sessions').select('participant_id').eq('room_code',roomCode).eq('user_id',userId).maybeSingle();
+ if(error)throw new Error('Human persistence unavailable');
+ if(!data)throw new HumanError(404,'session_not_found',errors.session_not_found[1]);
+ return rpc('human_session',{p_room_code:roomCode,p_user_id:userId,p_action:'get'});
 }
 export async function handle(request:Request,roomCode:string,action:(userId:string)=>Promise<unknown>,status=200) {
  try {

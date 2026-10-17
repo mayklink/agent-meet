@@ -1,5 +1,5 @@
 import { beforeEach,describe,expect,it,vi } from 'vitest';
-const admin=vi.hoisted(()=>({auth:{getUser:vi.fn()},rpc:vi.fn()}));
+const admin=vi.hoisted(()=>({auth:{getUser:vi.fn()},rpc:vi.fn(),from:vi.fn(),maybeSingle:vi.fn(),eq:vi.fn(),select:vi.fn()}));
 vi.mock('@/lib/server/db',()=>({getAdmin:()=>admin}));
 import * as session from '@/app/api/human/rooms/[room_code]/session/route';
 import * as messages from '@/app/api/human/rooms/[room_code]/messages/route';
@@ -8,8 +8,9 @@ import * as invite from '@/app/api/human/rooms/[room_code]/invite/route';
 const room='aaa-bbbb-cccc',uid='11111111-1111-4111-8111-111111111111';
 const ctx={params:Promise.resolve({room_code:room})};
 const req=(body?:unknown,headers:Record<string,string>={},method='POST')=>new Request('https://meeting.test/api/human/rooms/'+room+'/session',{method,headers:{Authorization:'Bearer valid-user-token','Content-Type':'application/json',...headers},...(body===undefined?{}:{body:JSON.stringify(body)})});
-beforeEach(()=>{vi.clearAllMocks();admin.auth.getUser.mockResolvedValue({data:{user:{id:uid,is_anonymous:false}},error:null});admin.rpc.mockResolvedValue({data:{status:'active'},error:null});});
+beforeEach(()=>{vi.clearAllMocks();admin.from.mockReturnValue(admin);admin.select.mockReturnValue(admin);admin.eq.mockReturnValue(admin);admin.maybeSingle.mockResolvedValue({data:{participant_id:'hu_test'},error:null});admin.auth.getUser.mockResolvedValue({data:{user:{id:uid,is_anonymous:false}},error:null});admin.rpc.mockResolvedValue({data:{status:'active'},error:null});});
 describe('human HTTP trust boundary',()=>{
+ it('distinguishes first-time membership lookup from revoked access',async()=>{admin.maybeSingle.mockResolvedValue({data:null,error:null});const first=await session.GET(req(undefined,{},'GET'),ctx);expect(first.status).toBe(404);expect(await first.json()).toMatchObject({error:'session_not_found'});expect(admin.eq).toHaveBeenCalledWith('room_code',room);expect(admin.eq).toHaveBeenCalledWith('user_id',uid);expect(admin.rpc).not.toHaveBeenCalled();admin.maybeSingle.mockResolvedValue({data:{participant_id:'hu_test'},error:null});admin.rpc.mockResolvedValue({data:null,error:{message:'human:forbidden'}});expect((await session.GET(req(undefined,{},'GET'),ctx)).status).toBe(403);});
  it('uses verified Auth identity instead of body identity',async()=>{const r=await session.POST(req({display_name:'Ana',creator_token:'invite',user_id:'attacker'}),ctx);expect(r.status).toBe(200);expect(admin.rpc).toHaveBeenCalledWith('human_join',expect.objectContaining({p_user_id:uid}));expect(r.headers.get('cache-control')).toBe('no-store');});
  it('rejects missing, expired and anonymous authentication',async()=>{expect((await session.GET(req(undefined,{Authorization:''},'GET'),ctx)).status).toBe(401);admin.auth.getUser.mockResolvedValue({data:{user:null},error:{message:'bad'}});expect((await session.GET(req(undefined,{},'GET'),ctx)).status).toBe(401);admin.auth.getUser.mockResolvedValue({data:{user:{id:uid,is_anonymous:true}},error:null});expect((await session.GET(req(undefined,{},'GET'),ctx)).status).toBe(401);expect(admin.rpc).not.toHaveBeenCalled();});
  it('rejects cross-origin mutations before Auth or persistence',async()=>{expect((await session.POST(req({display_name:'Ana'},{origin:'https://evil.test'}),ctx)).status).toBe(403);expect(admin.auth.getUser).not.toHaveBeenCalled();});
