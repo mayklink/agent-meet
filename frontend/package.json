@@ -6,7 +6,9 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",
@@ -19,7 +21,9 @@
     "react-markdown": "^10.1.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "1.56.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -27,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.12",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "3.2.4"
   }
 }
