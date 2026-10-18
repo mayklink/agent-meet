@@ -7,5 +7,6 @@ export async function database() {
  await db.exec(baseline);
  await db.exec(readFileSync(new URL('../supabase/human-participation.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../supabase/human-security.sql',import.meta.url),'utf8'));
+ await db.exec(readFileSync(new URL('../supabase/unlimited-rooms.sql',import.meta.url),'utf8'));
  return db;
 }

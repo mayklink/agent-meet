@@ -41,9 +41,44 @@ export interface TranscriptResponse {
   agents: Agent[];
 }
 
+interface PaginatedTranscriptResponse extends TranscriptResponse {
+  offset: number;
+  has_more: boolean;
+  next_offset?: number;
+}
+
 export async function getTranscript(roomCode: string): Promise<TranscriptResponse> {
-  const data = await request<TranscriptResponse>(`/api/v1/${roomCode}/transcript`);
-  return { messages: data.messages ?? [], agents: data.agents ?? [] };
+  const pageSize = 500;
+  let offset = 0;
+  let agents: Agent[] = [];
+  const messages: Message[] = [];
+
+  for (;;) {
+    const data = await request<PaginatedTranscriptResponse>(
+      `/api/v1/${roomCode}/transcript?limit=${pageSize}&offset=${offset}`
+    );
+    if (!Array.isArray(data.messages) || !Number.isInteger(data.offset) || typeof data.has_more !== "boolean") {
+      throw new Error("Transcript API returned invalid pagination metadata.");
+    }
+    if (data.offset !== offset) {
+      throw new Error(`Transcript API returned offset ${data.offset} when ${offset} was requested.`);
+    }
+    if (offset === 0) agents = data.agents ?? [];
+    messages.push(...data.messages);
+
+    if (!data.has_more) break;
+    if (data.messages.length === 0) {
+      throw new Error("Transcript pagination reported more messages but returned an empty page.");
+    }
+
+    const nextOffset = data.next_offset ?? data.offset + data.messages.length;
+    if (!Number.isInteger(nextOffset) || nextOffset <= offset) {
+      throw new Error("Transcript pagination did not advance to the next page.");
+    }
+    offset = nextOffset;
+  }
+
+  return { messages, agents };
 }
 
 export async function kickAgent(

@@ -1,0 +1,20 @@
+import { test, expect } from '@playwright/test';
+test('unlimited room keeps sending and reloads complete history beyond 1000 messages',async({page,request})=>{
+ const created=await request.post('/api/v1/rooms',{data:{}});expect(created.status()).toBe(201);const room=await created.json();expect(room.max_messages).toBe(0);
+ const headers={apikey:'local-e2e-service-key'};
+ const seeded=await request.post('http://127.0.0.1:54329/rest/v1/messages',{headers,data:Array.from({length:1105},(_,i)=>({room_code:room.room_code,agent_id:room.agent_id,agent_name:'History QA',content:`History item ${i+1} marker`,room_seq:i+1}))});expect(seeded.status()).toBe(201);
+ expect((await request.patch(`http://127.0.0.1:54329/rest/v1/rooms?room_code=eq.${room.room_code}`,{headers,data:{message_count:1105}})).ok()).toBeTruthy();
+ const payload={agent_token:room.agent_token,agent_name:'History QA',content:'Message after 1105 marker'};
+ expect((await request.post(`/api/v1/${room.room_code}/message`,{data:payload})).status()).toBe(201);
+ expect((await (await request.get(`/api/v1/${room.room_code}/status`)).json()).state).toBe('active');
+ await page.goto('/'+room.room_code);
+ await expect(page.getByText('History item 1 marker',{exact:true})).toBeVisible();
+ await expect(page.getByText('Message after 1105 marker',{exact:true})).toBeVisible();
+ await page.reload();
+ await expect(page.getByText('History item 501 marker',{exact:true})).toBeVisible();
+ await expect(page.getByText('History item 1001 marker',{exact:true})).toBeVisible();
+ await expect(page.getByText('Message after 1105 marker',{exact:true})).toBeVisible();
+ expect((await request.post(`/api/v1/${room.room_code}/lock`,{data:{creator_token:room.creator_token}})).status()).toBe(200);
+ expect((await request.post(`/api/v1/${room.room_code}/message`,{data:payload})).status()).toBe(423);
+ const history=await (await request.get(`/api/v1/${room.room_code}/transcript?offset=1000&limit=500`)).json();expect(history.total_messages).toBe(1106);expect(history.messages).toHaveLength(106);
+});

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 const db=new PGlite();
 await db.exec('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;');
-for(const name of ['migration.sql','human-participation.sql','human-security.sql'])await db.exec(readFileSync(new URL('../../supabase/'+name,import.meta.url),'utf8').replace(/^ALTER PUBLICATION .*$/gm,''));
+for(const name of ['migration.sql','human-participation.sql','human-security.sql','unlimited-rooms.sql'])await db.exec(readFileSync(new URL('../../supabase/'+name,import.meta.url),'utf8').replace(/^ALTER PUBLICATION .*$/gm,''));
 const user={id:'11111111-1111-4111-8111-111111111111',aud:'authenticated',role:'authenticated',email:'human@example.test',is_anonymous:false,app_metadata:{provider:'email'},user_metadata:{},created_at:new Date().toISOString()};
 const jwt=[{alg:'HS256',typ:'JWT'},{sub:user.id,role:'authenticated',exp:Math.floor(Date.now()/1000)+3600},'test-signature'].map((v,i)=>i===2?v:Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');
 const allowedTables={rooms:['id','room_code','creator_token','state','max_messages','message_count','lock_reason','locked_at','first_message_at','last_activity_at','created_at'],agents:['id','agent_id','agent_token','room_code','agent_name','status','created_at','activated_at','left_at'],messages:['id','room_code','agent_id','agent_name','content','room_seq','read_by','created_at'],human_sessions:['participant_id','room_code','user_id']};
@@ -43,7 +43,7 @@ const server=createServer(async(req,res)=>{
   const filter=where.length?' WHERE '+where.join(' AND '):'';
   const selected=(url.searchParams.get('select')??'*')==='*'?'*':url.searchParams.get('select').split(',').map(column).join(',');
   let sql;
-  if(req.method==='POST'){const keys=Object.keys(data);sql=`INSERT INTO public.${table}(${keys.map(column).join(',')}) VALUES(${keys.map(k=>bind(data[k])).join(',')}) RETURNING ${selected}`;}
+  if(req.method==='POST'){const records=Array.isArray(data)?data:[data];const keys=Object.keys(records[0]);sql=`INSERT INTO public.${table}(${keys.map(column).join(',')}) VALUES ${records.map(record=>`(${keys.map(k=>bind(record[k])).join(',')})`).join(',')} RETURNING ${selected}`;}
   else if(req.method==='PATCH'){sql=`UPDATE public.${table} SET ${Object.keys(data).map(k=>`${column(k)}=${bind(data[k])}`).join(',')}${filter} RETURNING ${selected}`;}
   else{sql=`SELECT ${selected} FROM public.${table}${filter}`;if(url.searchParams.has('order')){const [c,d]=url.searchParams.get('order').split('.');sql+=` ORDER BY ${column(c)} ${d==='desc'?'DESC':'ASC'}`;}if(url.searchParams.has('limit'))sql+=` LIMIT ${bind(Number(url.searchParams.get('limit')))}`;if(url.searchParams.has('offset'))sql+=` OFFSET ${bind(Number(url.searchParams.get('offset')))}`;}
   const result=await db.query(sql,values);

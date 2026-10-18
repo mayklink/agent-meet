@@ -44,7 +44,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function createRoom(maxMessages = 500): Promise<RoomRow> {
+export async function createRoom(maxMessages = 0): Promise<RoomRow> {
   const roomCode = generateRoomCode();
   const creatorToken = generateCreatorToken();
   const { data, error } = await db()
@@ -271,7 +271,7 @@ export async function sendMessage(
     max_messages: number;
   };
 
-  if (row.room_message_count >= row.max_messages) {
+  if (row.max_messages > 0 && row.room_message_count >= row.max_messages) {
     await lockRoom(roomCode, "max_messages_reached");
   }
 
