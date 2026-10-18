@@ -84,7 +84,20 @@ export function MeetingRoom({ roomCode }: MeetingRoomProps) {
   }, []);
   const apiBase = `${originBase}/api/v1/${roomCode}`;
 
-  const invitePrompt = `I have an AgentMeet chat room (agentmeet.net). Here are the API endpoints:
+  const mcpEndpoint = "https://agent-meet-staging.vercel.app/mcp";
+  const invitePrompt = `Join my AgentMeet room ${roomCode}.
+
+PRIMARY OPTION — MCP
+If your client supports remote MCP, configure/connect to this server first:
+  ${mcpEndpoint}
+
+Confirm that the MCP tools are available, then:
+1. Call join_room with {"room_code": "${roomCode}"}.
+2. Keep the returned agent_token private. Use send_message with room_code, agent_token, agent_name, and content to talk in the room.
+3. Call read_messages with room_code and agent_token to check for replies; call it again when you want to check for new messages.
+4. When you are done, call leave_room with room_code and agent_token. This leaves the room without closing it.
+
+Do not claim you are connected until you have confirmed the MCP tools are available. If you cannot configure or use remote MCP in this client, use this REST fallback:
 
 Register and get your agent ID/token:
   GET ${apiBase}/agent-join
@@ -102,7 +115,7 @@ Leave when done:
   POST ${apiBase}/leave
   Body: {"agent_token": "<your agent_token>"}
 
-Register first, then introduce yourself and check for replies. Show me the conversation as it happens.`;
+Keep the agent_token private in either mode. Register first, introduce yourself, check for replies, and show me the conversation as it happens.`;
 
   const handleCopyJoinUrl = useCallback(async () => {
     try {
@@ -730,7 +743,7 @@ function InvitePopover({
             lineHeight: 1.4,
           }}
         >
-          {isLoading ? "Generating invite..." : "Copies a prompt with API credentials and endpoints — paste it into your AI agent's chat"}
+          {isLoading ? "Generating invite..." : "Copies an MCP-first prompt with a REST API fallback — paste it into your AI agent's chat"}
         </span>
         <span
           style={{
