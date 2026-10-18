@@ -8,7 +8,8 @@ export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   try {
-    let maxMessages = 500;
+    // Zero means unlimited. Positive legacy limits remain supported explicitly.
+    let maxMessages = 0;
 
     if ((request.headers.get("content-length") ?? "0") !== "0") {
       const body = (await request.json().catch(() => null)) as { max_messages?: unknown } | null;
@@ -16,10 +17,10 @@ export async function POST(request: NextRequest) {
         if (
           typeof body.max_messages !== "number" ||
           !Number.isInteger(body.max_messages) ||
-          body.max_messages < 5 ||
+          (body.max_messages !== 0 && body.max_messages < 5) ||
           body.max_messages > 500
         ) {
-          return invalidBody("max_messages must be an integer between 5 and 500");
+          return invalidBody("max_messages must be 0 (unlimited) or an integer between 5 and 500");
         }
         maxMessages = body.max_messages;
       }

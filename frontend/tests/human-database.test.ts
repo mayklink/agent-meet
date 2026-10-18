@@ -1,0 +1,42 @@
+import { afterAll,beforeAll,describe,expect,it } from 'vitest';
+import { database } from './database';
+import type { PGlite } from '@electric-sql/pglite';
+const user='11111111-1111-4111-8111-111111111111';
+const other='22222222-2222-4222-8222-222222222222';
+let db:PGlite;
+async function call(name:string,args:unknown[]){const placeholders=args.map((_,i)=>`$${i+1}`).join(',');return (await db.query<{result:Record<string,unknown>}>(`SELECT public.${name}(${placeholders}) AS result`,args)).rows[0].result;}
+beforeAll(async()=>{db=await database();await db.exec("INSERT INTO rooms(room_code,creator_token,max_messages) VALUES('aaa-bbbb-cccc','ct_secret',5),('ddd-eeee-ffff','ct_other',5);");},30000);
+afterAll(async()=>{await db?.close();});
+describe.sequential('human transactions against PostgreSQL (PGlite)',()=>{
+ it('rejects room access without invitation',async()=>{await expect(call('human_join',['aaa-bbbb-cccc',user,'Maria',null])).rejects.toThrow('human:forbidden');});
+ it('creates one persistent room-bound participant across retries',async()=>{const a=await call('human_join',['aaa-bbbb-cccc',user,'Maria','ct_secret']);const b=await call('human_join',['aaa-bbbb-cccc',user,'Maria',null]);expect(a.participant_id).toBe(b.participant_id);expect(a.participant_id).toMatch(/^hu_/);expect((await db.query('SELECT * FROM human_sessions')).rows).toHaveLength(1);});
+ it('rejects identity and room substitution',async()=>{await expect(call('human_message',['aaa-bbbb-cccc',other,crypto.randomUUID(),'bad','chat'])).rejects.toThrow('human:forbidden');await expect(call('human_message',['ddd-eeee-ffff',user,crypto.randomUUID(),'bad','chat'])).rejects.toThrow('human:forbidden');});
+ it('persists one canonical message and receipt on concurrent retry',async()=>{const id=crypto.randomUUID();const [a,b]=await Promise.all([call('human_message',['aaa-bbbb-cccc',user,id,'Olá mundo','chat']),call('human_message',['aaa-bbbb-cccc',user,id,'Olá mundo','chat'])]);expect(a.message_id).toBe(b.message_id);expect((await db.query('SELECT * FROM messages')).rows).toHaveLength(1);expect((await db.query('SELECT * FROM human_message_receipts')).rows).toHaveLength(1);await expect(call('human_message',['aaa-bbbb-cccc',user,id,'changed','chat'])).rejects.toThrow('human:idempotency_conflict');});
+ it('throttles only new sends, without blocking retries',async()=>{await expect(call('human_message',['aaa-bbbb-cccc',user,crypto.randomUUID(),'too fast','voice'])).rejects.toThrow('human:rate_limited');});
+ it('uses canonical messages for legacy RPC reads',async()=>{const id=(await db.query<{participant_id:string}>('SELECT participant_id FROM human_sessions')).rows[0].participant_id;const rows=await db.query<{content:string,agent_id:string}>('SELECT content,agent_id FROM messages');expect(rows.rows[0]).toEqual({content:'Olá mundo',agent_id:id});const read=await call('mark_messages_read',['aaa-bbbb-cccc',id,[1]]);expect(read.content).toBe('Olá mundo');});
+ it('presence is scoped and expires without client disconnect',async()=>{const p=await call('human_session',['aaa-bbbb-cccc',user,'presence']);expect(p.participants).toMatchObject([{display_name:'Maria',online:true}]);await db.exec("UPDATE human_sessions SET last_seen_at=now()-interval '46 seconds'");expect((await call('human_session',['aaa-bbbb-cccc',user,'presence'])).participants).toMatchObject([{online:false}]);await call('human_session',['aaa-bbbb-cccc',user,'heartbeat']);});
+ it('locked room rejects new writes; existing retry remains readable',async()=>{await db.exec("UPDATE rooms SET state='locked' WHERE room_code='aaa-bbbb-cccc'");await expect(call('human_message',['aaa-bbbb-cccc',user,crypto.randomUUID(),'locked','chat'])).rejects.toThrow('human:room_locked');await db.exec("UPDATE rooms SET state='active' WHERE room_code='aaa-bbbb-cccc'");});
+ it('expiration prevents send and heartbeat',async()=>{await db.exec("UPDATE human_sessions SET expires_at=now()-interval '1 second'");await expect(call('human_session',['aaa-bbbb-cccc',user,'heartbeat'])).rejects.toThrow('human:forbidden');await expect(call('human_message',['aaa-bbbb-cccc',user,crypto.randomUUID(),'expired','chat'])).rejects.toThrow('human:forbidden');await call('human_join',['aaa-bbbb-cccc',user,'Maria',null]);});
+ it('leave revokes writes and kick prevents rejoin',async()=>{await call('human_session',['aaa-bbbb-cccc',user,'leave']);await expect(call('human_message',['aaa-bbbb-cccc',user,crypto.randomUUID(),'left','chat'])).rejects.toThrow('human:forbidden');await call('human_join',['aaa-bbbb-cccc',user,'Maria',null]);await db.exec("UPDATE agents SET status='kicked' WHERE agent_id LIKE 'hu_%'");await expect(call('human_join',['aaa-bbbb-cccc',user,'Maria','ct_secret'])).rejects.toThrow('human:forbidden');});
+ it('anonymous and authenticated roles cannot invoke privileged functions',async()=>{const {rows}=await db.query<{role:string,allowed:boolean}>("SELECT role,has_function_privilege(role,'public.human_message(text,uuid,uuid,text,text)','EXECUTE') AS allowed FROM (VALUES('anon'),('authenticated')) AS roles(role)");expect(rows.every(r=>!r.allowed)).toBe(true);const tables=await db.query<{allowed:boolean}>("SELECT has_table_privilege('anon','public.human_sessions','SELECT') AS allowed");expect(tables.rows[0].allowed).toBe(false);});
+ it('issues participation-only invitations with room binding and rotation',async()=>{
+  await expect(call('human_create_invite',['ddd-eeee-ffff','bad'])).rejects.toThrow('human:forbidden');
+  const invite=await call('human_create_invite',['ddd-eeee-ffff','ct_other']);
+  await expect(call('human_join',['aaa-bbbb-cccc',other,'Invited',invite.invite_token])).rejects.toThrow('human:forbidden');
+  const member=await call('human_join',['ddd-eeee-ffff',other,'Invited',invite.invite_token]);expect(member.status).toBe('active');
+  await expect(call('human_create_invite',['ddd-eeee-ffff',invite.invite_token])).rejects.toThrow('human:forbidden');
+  await call('human_create_invite',['ddd-eeee-ffff','ct_other']);
+  await expect(call('human_join',['ddd-eeee-ffff','33333333-3333-4333-8333-333333333333','Other',invite.invite_token])).rejects.toThrow('human:forbidden');
+ });
+ it('max message boundary atomically locks and retry never duplicates',async()=>{
+  await db.exec("UPDATE rooms SET message_count=4 WHERE room_code='ddd-eeee-ffff'");
+  const id=crypto.randomUUID();const first=await call('human_message',['ddd-eeee-ffff',other,id,'Última mensagem','voice']);
+  expect(first.room_message_count).toBe(5);
+  expect((await db.query<{state:string}>("SELECT state FROM rooms WHERE room_code='ddd-eeee-ffff'")).rows[0].state).toBe('locked');
+  expect((await call('human_message',['ddd-eeee-ffff',other,id,'Última mensagem','voice'])).message_id).toBe(first.message_id);
+  await expect(call('human_message',['ddd-eeee-ffff',other,crypto.randomUUID(),'Excedente','chat'])).rejects.toThrow('human:room_locked');
+ });
+ it('column grants protect credentials and retain public nonsecret stream columns',async()=>{
+  const {rows}=await db.query<{creator:boolean,agent:boolean,public:boolean}>("SELECT has_column_privilege('anon','public.rooms','creator_token','SELECT') AS creator,has_column_privilege('anon','public.agents','agent_token','SELECT') AS agent,has_column_privilege('anon','public.rooms','room_code','SELECT') AS public");expect(rows[0]).toEqual({creator:false,agent:false,public:true});
+ });
+});

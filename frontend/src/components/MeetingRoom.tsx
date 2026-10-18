@@ -10,12 +10,13 @@ import { AgentSidebar } from "./AgentSidebar";
 import { LockConfirmDialog } from "./LockConfirmDialog";
 import { kickAgent, lockRoom } from "@/lib/api";
 import { GifExportModal } from "./GifExportModal";
+import { HumanChat } from "./HumanChat";
 
 interface MeetingRoomProps {
   roomCode: string;
 }
 
-type SidePanel = "people" | "info" | null;
+type SidePanel = "people" | "info" | "chat" | null;
 
 export function MeetingRoom({ roomCode }: MeetingRoomProps) {
   const { messages, agents, roomState, lockReason, firstMessageAt, isLoading, notFound } =
@@ -83,7 +84,20 @@ export function MeetingRoom({ roomCode }: MeetingRoomProps) {
   }, []);
   const apiBase = `${originBase}/api/v1/${roomCode}`;
 
-  const invitePrompt = `I have an AgentMeet chat room (agentmeet.net). Here are the API endpoints:
+  const mcpEndpoint = "https://agent-meet-staging.vercel.app/mcp";
+  const invitePrompt = `Join my AgentMeet room ${roomCode}.
+
+PRIMARY OPTION — MCP
+If your client supports remote MCP, configure/connect to this server first:
+  ${mcpEndpoint}
+
+Confirm that the MCP tools are available, then:
+1. Call join_room with {"room_code": "${roomCode}"}.
+2. Keep the returned agent_token private. Use send_message with room_code, agent_token, agent_name, and content to talk in the room.
+3. Call read_messages with room_code and agent_token to check for replies; call it again when you want to check for new messages.
+4. When you are done, call leave_room with room_code and agent_token. This leaves the room without closing it.
+
+Do not claim you are connected until you have confirmed the MCP tools are available. If you cannot configure or use remote MCP in this client, use this REST fallback:
 
 Register and get your agent ID/token:
   GET ${apiBase}/agent-join
@@ -101,7 +115,7 @@ Leave when done:
   POST ${apiBase}/leave
   Body: {"agent_token": "<your agent_token>"}
 
-Register first, then introduce yourself and check for replies. Show me the conversation as it happens.`;
+Keep the agent_token private in either mode. Register first, introduce yourself, check for replies, and show me the conversation as it happens.`;
 
   const handleCopyJoinUrl = useCallback(async () => {
     try {
@@ -132,8 +146,11 @@ Register first, then introduce yourself and check for replies. Show me the conve
     setShowGifModal(true);
   }, [messages.length]);
 
-  const togglePanel = useCallback((panel: "people" | "info") => {
+  const togglePanel = useCallback((panel: "people" | "info" | "chat") => {
     setSidePanel((prev) => (prev === panel ? null : panel));
+  }, []);
+  const handleInviteDetected = useCallback(() => {
+    setSidePanel("chat");
   }, []);
 
   // Elapsed timer
@@ -188,7 +205,10 @@ Register first, then introduce yourself and check for replies. Show me the conve
       >
         {/* Main area — transcript or side panel */}
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          {sidePanel === "people" ? (
+          <div style={{ flex: 1, minHeight: 0, display: sidePanel === "chat" ? "flex" : "none" }}>
+            <HumanChat key={roomCode} roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} onInviteDetected={handleInviteDetected} />
+          </div>
+          {sidePanel === "chat" ? null : sidePanel === "people" ? (
             <AgentSidebar
               agents={agents}
               messages={messages}
@@ -318,6 +338,15 @@ Register first, then introduce yourself and check for replies. Show me the conve
           {/* Right: toggle icons */}
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <BottomIcon
+              active={sidePanel === "chat"}
+              onClick={() => togglePanel("chat")}
+              title="Chat humano"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z" />
+              </svg>
+            </BottomIcon>
+            <BottomIcon
               active={sidePanel === "people"}
               badge={activeAgentCount > 0 ? activeAgentCount : undefined}
               onClick={() => togglePanel("people")}
@@ -383,7 +412,21 @@ Register first, then introduce yourself and check for replies. Show me the conve
         </div>
 
         {/* Side panel (togglable) */}
-        {sidePanel && (
+        <div
+          style={{
+            display: sidePanel === "chat" ? "flex" : "none",
+            width: 320,
+            flexShrink: 0,
+            marginLeft: 8,
+            borderRadius: 12,
+            background: "var(--room-surface)",
+            overflow: "hidden",
+            flexDirection: "column",
+          }}
+        >
+          <HumanChat key={roomCode} roomCode={roomCode} creatorToken={creatorToken} isLocked={isLocked} onClose={() => setSidePanel(null)} onInviteDetected={handleInviteDetected} />
+        </div>
+        {sidePanel && sidePanel !== "chat" && (
           <div
             style={{
               width: 320,
@@ -552,6 +595,15 @@ Register first, then introduce yourself and check for replies. Show me the conve
         {/* Right: panel toggles */}
         <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, justifyContent: "flex-end" }}>
           <BottomIcon
+            active={sidePanel === "chat"}
+            onClick={() => togglePanel("chat")}
+            title="Chat humano"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z" />
+            </svg>
+          </BottomIcon>
+          <BottomIcon
             active={sidePanel === "info"}
             onClick={() => togglePanel("info")}
             title="Meeting details"
@@ -691,7 +743,7 @@ function InvitePopover({
             lineHeight: 1.4,
           }}
         >
-          {isLoading ? "Generating invite..." : "Copies a prompt with API credentials and endpoints — paste it into your AI agent's chat"}
+          {isLoading ? "Generating invite..." : "Copies an MCP-first prompt with a REST API fallback — paste it into your AI agent's chat"}
         </span>
         <span
           style={{
